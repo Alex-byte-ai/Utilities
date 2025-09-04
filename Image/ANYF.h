@@ -28,7 +28,6 @@ struct Misc : public Compression
     void decompress( Format &fmt, const Reference &source, Reference &destination ) const override;
 
     bool equals( const Compression &other ) const override;
-    std::shared_ptr<Compression> clone() const override;
 };
 
 struct Palette : public Compression
@@ -41,6 +40,5 @@ struct Palette : public Compression
     void decompress( Format &fmt, const Reference &source, Reference &destination ) const override;
 
     bool equals( const Compression &other ) const override;
-    std::shared_ptr<Compression> clone() const override;
 };
 }

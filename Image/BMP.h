@@ -21,8 +21,6 @@ struct RleBmp : public Compression
     void decompress( Format &fmt, const Reference &source, Reference &destination ) const override;
 
     bool equals( const Compression &other ) const override;
-
-    std::shared_ptr<Compression> clone() const override;
 };
 
 void makeBmp( const Reference &ref, bool fileHeader, bool bmpHeader, Format &format, HeaderWriter *write );

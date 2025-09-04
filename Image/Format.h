@@ -82,8 +82,6 @@ struct Compression : public PixelFormat
 
     virtual bool equals( const Compression &other ) const;
 
-    virtual std::shared_ptr<Compression> clone() const = 0;
-
     virtual ~Compression();
 };
 

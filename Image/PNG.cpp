@@ -1,4 +1,4 @@
-#include "Image\PNG.h"
+#include "Image/PNG.h"
 
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wall"
@@ -235,11 +235,6 @@ bool FracturePng::equals( const Compression &other ) const
     return false;
 };
 
-std::shared_ptr<Compression> FracturePng::clone() const
-{
-    return std::make_shared<FracturePng>( 0, *this );
-}
-
 ZlibPng::ZlibPng( unsigned s, const PixelFormat &pfmt ) : Compression( s, pfmt )
 {}
 
@@ -305,11 +300,6 @@ bool ZlibPng::equals( const Compression &other ) const
         return this->Compression::operator==( other );
     return false;
 };
-
-std::shared_ptr<Compression> ZlibPng::clone() const
-{
-    return std::make_shared<ZlibPng>( 0, *this );
-}
 
 FilterAndInterlacePng::Step::Step( unsigned pass )
 {
@@ -729,11 +719,6 @@ bool FilterAndInterlacePng::equals( const Compression &other ) const
                h == fip->h;
     return false;
 };
-
-std::shared_ptr<Compression> FilterAndInterlacePng::clone() const
-{
-    return std::make_shared<FilterAndInterlacePng>( *this );
-}
 
 static void extractPng( Format &fmt, ReaderBase &r )
 {

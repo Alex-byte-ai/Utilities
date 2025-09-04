@@ -166,11 +166,6 @@ bool Misc::equals( const Compression &other ) const
     return false;
 };
 
-std::shared_ptr<Compression> Misc::clone() const
-{
-    return std::make_shared<Misc>( 0, fixX, fixY, transparent, *this );
-}
-
 void Palette::compress( Format &, const Reference &, Reference & )
 {
     // Not implemented
@@ -214,12 +209,5 @@ bool Palette::equals( const Compression &other ) const
     if( auto otherPtr = dynamic_cast<const Palette *>( &other ) )
         return samples == otherPtr->samples && this->Compression::operator==( other );
     return false;
-}
-
-std::shared_ptr<Compression> Palette::clone() const
-{
-    auto result = std::make_shared<Palette>( 0, *this );
-    result->samples = samples;
-    return result;
 }
 }

@@ -1,4 +1,4 @@
-#include "Image\BMP.h"
+#include "Image/BMP.h"
 
 #include <algorithm>
 
@@ -248,11 +248,6 @@ bool RleBmp::equals( const Compression &other ) const
     if( auto otherPtr = dynamic_cast<const RleBmp *>( &other ) )
         return granule == otherPtr->granule && this->Compression::operator==( other );
     return false;
-};
-
-std::shared_ptr<Compression> RleBmp::clone() const
-{
-    return std::make_shared<RleBmp>( 0, *this, granule );
 };
 
 static void extractBmp( Format &fmt, const void *palettePtr, unsigned colorNumber, bool reserved, bool alpha )

@@ -32,7 +32,6 @@ struct FracturePng : public Compression
     void decompress( Format &fmt, const Reference &source, Reference &destination ) const override;
 
     bool equals( const Compression &other ) const override;
-    std::shared_ptr<Compression> clone() const override;
 };
 
 struct ZlibPng : public Compression
@@ -43,7 +42,6 @@ struct ZlibPng : public Compression
     void decompress( Format &fmt, const Reference &source, Reference &destination ) const override;
 
     bool equals( const Compression &other ) const override;
-    std::shared_ptr<Compression> clone() const override;
 };
 
 struct FilterAndInterlacePng : public Compression
@@ -97,7 +95,6 @@ struct FilterAndInterlacePng : public Compression
     void decompress( Format &fmt, const Reference &source, Reference &destination ) const override;
 
     bool equals( const Compression &other ) const override;
-    std::shared_ptr<Compression> clone() const override;
 };
 
 void makePng( const Reference &ref, Format &format, HeaderWriter *write );
