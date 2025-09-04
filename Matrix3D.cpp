@@ -65,6 +65,11 @@ Matrix3D &Matrix3D::operator*=( double k )
     return *this;
 }
 
+Vector3D Matrix3D::operator*( const Vector3D& v ) const
+{
+    return Vector3D( a00 * v.x + a01 * v.y + a02 * v.z, a10 * v.x + a11 * v.y + a12 * v.z, a20 * v.x + a21 * v.y + a22 * v.z );
+}
+
 Matrix3D Matrix3D::operator/( double k ) const
 {
     Matrix3D r;

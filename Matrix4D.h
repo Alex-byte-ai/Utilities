@@ -1,5 +1,7 @@
 ﻿#pragma once
 
+#include "Vector4D.h"
+
 class Matrix4D
 {
 public:
@@ -21,6 +23,8 @@ public:
 
     Matrix4D operator*( double k ) const;
     Matrix4D &operator*=( double k );
+
+    Vector4D operator*( const Vector4D& v ) const;
 
     Matrix4D operator/( double k ) const;
     Matrix4D &operator/=( double k );

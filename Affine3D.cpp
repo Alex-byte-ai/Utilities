@@ -57,10 +57,3 @@ Affine3D Affine3D::inv() const
     auto tInv = t.inv();
     return Affine3D( tInv, -tInv * s );
 }
-
-Vector3D operator*( const Matrix3D &a, const Vector3D &b )
-{
-    return Vector3D( a.a00 * b.x + a.a01 * b.y + a.a02 * b.z,
-                     a.a10 * b.x + a.a11 * b.y + a.a12 * b.z,
-                     a.a20 * b.x + a.a21 * b.y + a.a22 * b.z );
-}

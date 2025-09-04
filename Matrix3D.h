@@ -20,6 +20,8 @@ public:
     Matrix3D operator*( double k ) const;
     Matrix3D &operator*=( double k );
 
+    Vector3D operator*( const Vector3D& v ) const;
+
     Matrix3D operator/( double k ) const;
     Matrix3D &operator/=( double k );
 

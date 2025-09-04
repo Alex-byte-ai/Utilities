@@ -94,6 +94,14 @@ Matrix4D &Matrix4D::operator*=( double k )
     return *this;
 }
 
+Vector4D Matrix4D::operator*( const Vector4D& v ) const
+{
+    return Vector4D( a00 * v.x + a01 * v.y + a02 * v.z + a03 * v.w,
+                     a10 * v.x + a11 * v.y + a12 * v.z + a13 * v.w,
+                     a20 * v.x + a21 * v.y + a22 * v.z + a23 * v.w,
+                     a30 * v.x + a31 * v.y + a32 * v.z + a33 * v.w );
+}
+
 Matrix4D Matrix4D::operator/( double k ) const
 {
     Matrix4D r = *this;

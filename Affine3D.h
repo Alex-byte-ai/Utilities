@@ -28,5 +28,3 @@ public:
 
     Affine3D inv() const;
 };
-
-Vector3D operator*( const Matrix3D &a, const Vector3D &b );
