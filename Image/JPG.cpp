@@ -1107,18 +1107,6 @@ void JPEG::write( WriterBase &w ) const
 // Compression pipeline
 // ---------------------------------------------------------------------------
 
-static const int ZigZag[64] =
-{
-    0,  1,  5,  6, 14, 15, 27, 28,
-    2,  4,  7, 13, 16, 26, 29, 42,
-    3,  8, 12, 17, 25, 30, 41, 43,
-    9, 11, 18, 24, 31, 40, 44, 53,
-    10, 19, 23, 32, 39, 45, 52, 54,
-    20, 22, 33, 38, 46, 51, 55, 60,
-    21, 34, 37, 47, 50, 56, 59, 61,
-    35, 36, 48, 49, 57, 58, 62, 63
-};
-
 // Helper LE readers/writers used in inter-stage buffers
 
 static void write_u32_le( std::vector<uint8_t>& out, uint32_t v )
@@ -1308,6 +1296,18 @@ void Huffman::decompress( const std::vector<uint8_t>&, std::vector<uint8_t>& out
     // Key { tableClass ( 0 = DC, 1 = AC ), tableID ( 0..3 ) }
     std::map<std::pair<uint8_t, uint8_t>, HuffmanTable> huffmanTables;
 
+    static const uint8_t ZigZag[64] =
+    {
+        0,  1,  5,  6, 14, 15, 27, 28,
+        2,  4,  7, 13, 16, 26, 29, 42,
+        3,  8, 12, 17, 25, 30, 41, 43,
+        9, 11, 18, 24, 31, 40, 44, 53,
+        10, 19, 23, 32, 39, 45, 52, 54,
+        20, 22, 33, 38, 46, 51, 55, 60,
+        21, 34, 37, 47, 50, 56, 59, 61,
+        35, 36, 48, 49, 57, 58, 62, 63
+    };
+
     auto buildTable = []( const SegmentDHT::Table & t ) -> HuffmanTable
     {
         HuffmanTable ht;
@@ -1349,7 +1349,7 @@ void Huffman::decompress( const std::vector<uint8_t>&, std::vector<uint8_t>& out
         }
     }
 
-    auto contains = [this]( auto table, unsigned code, unsigned bits ) -> bool
+    auto contains = []( const HuffmanTable * table, unsigned code, unsigned bits )
     {
         // Table does not exist
         if( !table )
@@ -1371,10 +1371,9 @@ void Huffman::decompress( const std::vector<uint8_t>&, std::vector<uint8_t>& out
         return false;
     };
 
-    auto lookup = [this]( auto table, unsigned code, unsigned bits )
+    auto lookup = []( const HuffmanTable * table, unsigned code, unsigned bits )
     {
         // Return the symbol from table assuming contains(...) already true
-
         makeException( table );
         makeException( bits > 0 && bits <= 16 );
 
@@ -1465,13 +1464,17 @@ void Huffman::decompress( const std::vector<uint8_t>&, std::vector<uint8_t>& out
 
                     size_t blocks = H * V;
                     for( size_t i = 0; i < blocks; ++i )
-                        m.blocks.emplace_back();
+                    {
+                        Block blk;
+                        blk.componentId = sc.componentId;
+                        m.blocks.emplace_back( std::move( blk ) );
+                    }
                 }
             }
         }
     };
 
-    auto getSymbol = [&]( Reader & reader, unsigned & bits, uint8_t & outSymbol, auto table )
+    auto getSymbol = [&]( Reader & reader, unsigned & bits, uint8_t & outSymbol, const HuffmanTable * table )
     {
         unsigned code = 0;
         bits = 0;
@@ -1514,7 +1517,8 @@ void Huffman::decompress( const std::vector<uint8_t>&, std::vector<uint8_t>& out
         int64_t amplitude = 0;
         getAmplitude( r, symbol, amplitude );
 
-        blk.coefficients[0] = ( int16_t )( amplitude << Al );
+        blk.coefficients[0] = ( int32_t )( amplitude << Al );
+        blk.written = true;
     };
 
     auto addAC = [&]( Reader & r, Block & blk, int component )
@@ -1529,15 +1533,30 @@ void Huffman::decompress( const std::vector<uint8_t>&, std::vector<uint8_t>& out
             uint8_t size = symbol & 0xF;
 
             if( run == 0 && size == 0 )
-                break; // EOB
+            {
+                // EOB: remaining coeffs in this block are zero
+                break;
+            }
+
+            if( run > 0 )
+            {
+                // Advance k by run
+                k += run;
+                if( k > 63 ) // Sanity check
+                    break;
+            }
 
             int64_t amplitude = 0;
             getAmplitude( r, size, amplitude );
-            blk.coefficients[k] = ( int16_t )( amplitude << Al );
+            if( k >= 0 && k < 64 )
+            {
+                blk.coefficients[k] = ( int32_t )( amplitude << Al );
+                blk.written = true;
+            }
         }
     };
 
-    // Main loop
+    // Main loop: decode into acc.mcus blocks
     for( auto segment : sos )
     {
         prepare( segment );
@@ -1551,12 +1570,12 @@ void Huffman::decompress( const std::vector<uint8_t>&, std::vector<uint8_t>& out
                 size_t blkIndex = 0;
                 for( size_t ci = 0; ci < segment->components.size(); ++ci )
                 {
-                    // Count blocks for this component
-
+                    // Locate SOF component for sampling factors
                     auto it = std::find_if( sof->components.begin(), sof->components.end(), [&]( const auto & c )
                     {
                         return c.componentId == segment->components[ci].componentId;
                     } );
+                    makeException( it != sof->components.end() );
 
                     uint8_t H = ( it->samplingFactors >> 4 ) & 0xF;
                     uint8_t V = it->samplingFactors & 0x0F;
@@ -1564,8 +1583,12 @@ void Huffman::decompress( const std::vector<uint8_t>&, std::vector<uint8_t>& out
 
                     for( size_t b = 0; b < blocks; ++b )
                     {
+                        // Sanity check index
+                        makeException( blkIndex < mcu.blocks.size() );
+
                         Block& blk = mcu.blocks[blkIndex++];
 
+                        // Decode DC + AC for
                         if( Ss == 0 )
                             addDC( reader, blk, ( int )ci );
                         else
@@ -1576,7 +1599,31 @@ void Huffman::decompress( const std::vector<uint8_t>&, std::vector<uint8_t>& out
         }
     }
 
-    // TODO: serialize mcus into `output`
+    // Count total blocks
+    size_t totalBlocks = 0;
+    for( auto &mcu : acc.mcus )
+        totalBlocks += mcu.blocks.size();
+
+    output.clear();
+    write_u32_le( output, ( uint32_t )totalBlocks );
+
+    // For each MCU in scan order, append its blocks in the same order they were decoded.
+    for( auto &mcu : acc.mcus )
+    {
+        for( auto &blk : mcu.blocks )
+        {
+            // Component id (SOF componentId)
+            output.push_back( blk.componentId );
+
+            // Inverse zigzag
+            int32_t natural[64];
+            for( int i = 0; i < 64; ++i )
+                natural[ ZigZag[i] ] = blk.coefficients[i];
+
+            for( int i = 0; i < 64; ++i )
+                write_i32_le( output, natural[i] );
+        }
+    }
 }
 
 void Huffman::compress( Format &, const Reference &, Reference & )
