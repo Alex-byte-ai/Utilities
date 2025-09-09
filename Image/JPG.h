@@ -446,6 +446,9 @@ struct Huffman : public Compression
 
     Huffman( const SegmentSOF* sof, const SegmentDRI* dri, std::vector<const SegmentDHT*> dht, std::vector<const SegmentSOS*> sos, unsigned s, const PixelFormat &pfmt );
 
+    // Decompress a Huffman-coded scan
+    // Input: entropy data extracted from the SOS segments
+    // Output: serialized current coefficient arrays { uint32_t count, {uint8_t compId, int32_t coeffs[64]}[count] blocks }
     void decompress( const std::vector<uint8_t>& input, std::vector<uint8_t>& output ) const;
 
     void compress( Format &fmt, const Reference &source, Reference &destination ) override;
@@ -476,6 +479,8 @@ struct Quantization : public Compression
     const SegmentSOF* sof;
     std::vector<const SegmentDQT*> dqt;
 
+    // Input: output of Huffman::decompress
+    // Output: same layout, but each coefficient replaced by dequantized value
     Quantization( const SegmentSOF* sof, std::vector<const SegmentDQT*> dqt, unsigned s, const PixelFormat &pfmt );
 
     void decompress( const std::vector<uint8_t>& input, std::vector<uint8_t>& output ) const;
@@ -492,6 +497,9 @@ struct DCT : public Compression
 
     DCT( const SegmentSOF* sof_, unsigned s, const PixelFormat &pfmt );
 
+    // AAN integer IDCT
+    // Input: dequantized coefficients { uint32_t count, { uint8_t compId, int32_t[64] }[count] blocks }
+    // Output: spatial samples (before level shift) { uint32_t count, { uint8_t compId, int32_t[64] }[count] blocks }
     void decompress( const std::vector<uint8_t>& input, std::vector<uint8_t>& output ) const;
 
     void compress( Format &fmt, const Reference &source, Reference &destination ) override;
@@ -506,6 +514,8 @@ struct BlockGrouping : public Compression
 
     BlockGrouping( const SegmentSOF* sof_, unsigned s, const PixelFormat &pfmt );
 
+    // Input: DCT output
+    // Output: uint16_t widthBlocks, uint16_t heightBlocks, uint8_t count, { uint8_t compId, uint8_t samplingFactors, uint8_t quantTableId, uint32_t numBlocks, {iint16_t[64]} blocks[numBlocks] }
     void decompress( const std::vector<uint8_t>& input, std::vector<uint8_t>& output ) const;
 
     void compress( Format &fmt, const Reference &source, Reference &destination ) override;
@@ -520,6 +530,9 @@ struct Scale : public Compression
 
     Scale( const SegmentSOF* sof_, unsigned s, const PixelFormat &pfmt );
 
+    // Bilinear chroma up-sampling
+    // Input: BlockGrouping output
+    // Output: header u16 width,u16 height,u8 components; for each component: u8 compId,u8 elemSize(2), then width*height i16 LE samples
     void decompress( const std::vector<uint8_t>& input, std::vector<uint8_t>& output ) const;
 
     void compress( Format &fmt, const Reference &source, Reference &destination ) override;
@@ -532,6 +545,9 @@ struct YCbCrK : public Compression
 {
     YCbCrK( unsigned s, const PixelFormat &pfmt );
 
+    // Color conversion
+    // Input: Scale output: u16 width, u16 height, u8 components; for each component: u8 compId, u8 elemSize (2) then width*height i16 LE
+    // Output: u16 width, u16 height, u8 channels, u8 bitDepth, then interleaved pixel data (RGB8)
     void decompress( const std::vector<uint8_t>& input, std::vector<uint8_t>& output ) const;
 
     void compress( Format &fmt, const Reference &source, Reference &destination ) override;
@@ -544,6 +560,8 @@ struct CMYK : public Compression
 {
     CMYK( unsigned s, const PixelFormat &pfmt );
 
+    // Color conversion
+    // Same as YCbCrK
     void decompress( const std::vector<uint8_t>& input, std::vector<uint8_t>& output ) const;
 
     void compress( Format &fmt, const Reference &source, Reference &destination ) override;

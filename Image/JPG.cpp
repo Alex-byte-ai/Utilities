@@ -1,6 +1,7 @@
 #include "Image/JPG.h"
 
 #include <algorithm>
+#include <map>
 
 #include "Image/PixelIO.h"
 
@@ -1274,8 +1275,308 @@ Huffman::Huffman( const SegmentSOF* sof_, const SegmentDRI* dri_, std::vector<co
 
 void Huffman::decompress( const std::vector<uint8_t>&, std::vector<uint8_t>& output ) const
 {
-    // Implement:
-    makeException( false );
+    struct Block
+    {
+        int32_t coefficients[64] = {0};
+        uint8_t componentId = 0; // SOF componentId
+        bool written = false; // Was this block written at least once
+    };
+
+    struct HuffmanTable
+    {
+        int minCode[17];
+        int maxCode[17];
+        int valPtr[17];
+        std::vector<uint8_t> symbols;
+    };
+
+    struct MCU
+    {
+        std::vector<Block> blocks;
+    };
+
+    struct Accumulator
+    {
+        std::vector<MCU> mcus;
+        size_t index = 0;
+    };
+
+    const SegmentSOS* currentSegment = nullptr;
+    int Ss = 0, Se = 0, Ah = 0, Al = 0;
+    Accumulator acc;
+
+    // Key { tableClass ( 0 = DC, 1 = AC ), tableID ( 0..3 ) }
+    std::map<std::pair<uint8_t, uint8_t>, HuffmanTable> huffmanTables;
+
+    auto buildTable = []( const SegmentDHT::Table & t ) -> HuffmanTable
+    {
+        HuffmanTable ht;
+        ht.symbols = t.symbols;
+
+        int code = 0;
+        int k = 0;
+
+        for( int i = 1; i <= 16; i++ )
+        {
+            uint8_t count = t.counts[i - 1];
+            if( count == 0 )
+            {
+                ht.minCode[i] = -1;
+                ht.maxCode[i] = -1;
+            }
+            else
+            {
+                ht.valPtr[i]  = k;
+                ht.minCode[i] = code;
+                code += count;
+                ht.maxCode[i] = code - 1;
+                code <<= 1; // Shift left for next bit length
+                k += count;
+            }
+        }
+
+        return ht;
+    };
+
+    // Parse all DHT segments
+    for( auto& d : dht )
+    {
+        for( auto& table : d->tables )
+        {
+            uint8_t tc = ( table.tc_th >> 4 ) & 0x0F;
+            uint8_t th = table.tc_th & 0x0F;
+            huffmanTables[ {tc, th}] = buildTable( table );
+        }
+    }
+
+    auto contains = [this]( auto table, unsigned code, unsigned bits ) -> bool
+    {
+        // Table does not exist
+        if( !table )
+            return false;
+
+        // Invalid length
+        if( bits == 0 || bits > 16 )
+            return false;
+
+        int mc = table->minCode[bits];
+        int xc = table->maxCode[bits];
+
+        if( mc < 0 || xc < 0 )
+            return false;
+
+        if( ( unsigned )mc <= code && code <= ( unsigned )xc )
+            return true;
+
+        return false;
+    };
+
+    auto lookup = [this]( auto table, unsigned code, unsigned bits )
+    {
+        // Return the symbol from table assuming contains(...) already true
+
+        makeException( table );
+        makeException( bits > 0 && bits <= 16 );
+
+        int minC = table->minCode[bits];
+        makeException( minC >= 0 );
+
+        int index = table->valPtr[bits] + ( int )( code - ( unsigned ) minC );
+        makeException( index >= 0 && index < ( int ) table->symbols.size() );
+
+        return table->symbols[index];
+    };
+
+    auto findTable = [&]( uint8_t tc, uint8_t th ) -> const HuffmanTable *
+    {
+        auto key = std::make_pair( tc, th );
+
+        auto i = huffmanTables.find( key );
+        if( i == huffmanTables.end() )
+            return nullptr;
+
+        return &i->second;
+    };
+
+    auto dcTable = [&]( int componentIndex )
+    {
+        auto sel = currentSegment->components[componentIndex].huffmanSelectors;
+        uint8_t th = ( sel >> 4 ) & 0x0F; // DC id
+        return findTable( 0, th );
+    };
+
+    auto acTable = [&]( int componentIndex )
+    {
+        auto sel = currentSegment->components[componentIndex].huffmanSelectors;
+        uint8_t th = sel & 0x0F; // AC id
+        return findTable( 1, th );
+    };
+
+    auto mcuGeometry = [&]()
+    {
+        uint8_t maxH = 0, maxV = 0;
+        for( auto& c : sof->components )
+        {
+            uint8_t H = ( c.samplingFactors >> 4 ) & 0xF;
+            uint8_t V = c.samplingFactors & 0x0F;
+            maxH = std::max( maxH, H );
+            maxV = std::max( maxV, V );
+        }
+        return std::pair{ maxH, maxV };
+    };
+
+    auto mcuCount = [&]()
+    {
+        auto [maxH, maxV] = mcuGeometry();
+        uint16_t width  = sof->header.imageWidth;
+        uint16_t height = sof->header.imageHeight;
+
+        size_t mcuX = ( width  + ( 8 * maxH - 1 ) ) / ( 8 * maxH );
+        size_t mcuY = ( height + ( 8 * maxV - 1 ) ) / ( 8 * maxV );
+        return mcuX * mcuY;
+    };
+
+    auto prepare = [&]( const SegmentSOS * s )
+    {
+        currentSegment = s;
+        Ss = s->spectralStart;
+        Se = s->spectralEnd;
+        Ah = ( s->successiveApproximation >> 4 ) & 0x0F;
+        Al = s->successiveApproximation & 0x0F;
+
+        if( acc.mcus.empty() )
+        {
+            acc.mcus.resize( mcuCount() );
+            auto [maxH, maxV] = mcuGeometry();
+
+            for( auto& m : acc.mcus )
+            {
+                for( auto& sc : s->components )
+                {
+                    // Find corresponding SOF component to read sampling
+                    auto it = std::find_if( sof->components.begin(), sof->components.end(), [&]( const auto & c )
+                    {
+                        return c.componentId == sc.componentId;
+                    } );
+                    makeException( it != sof->components.end() );
+
+                    uint8_t H = ( it->samplingFactors >> 4 ) & 0xF;
+                    uint8_t V = it->samplingFactors & 0x0F;
+
+                    size_t blocks = H * V;
+                    for( size_t i = 0; i < blocks; ++i )
+                        m.blocks.emplace_back();
+                }
+            }
+        }
+    };
+
+    auto getSymbol = [&]( Reader & reader, unsigned & bits, uint8_t & outSymbol, auto table )
+    {
+        unsigned code = 0;
+        bits = 0;
+        do
+        {
+            BitList bit;
+            reader.read( 1, bit );
+            code = ( code << 1 ) | bit;
+            bits++;
+            makeException( bits <= 16 ); // Huffman codes max 16 bits
+        }
+        while( !contains( table, code, bits ) );
+
+        outSymbol = lookup( table, code, bits );
+    };
+
+    auto getAmplitude = [&]( Reader & reader, BitList category, int64_t& amplitude )
+    {
+        unsigned size = ( unsigned ) category;
+        if( size == 0 )
+        {
+            amplitude = 0;
+            return;
+        }
+
+        BitList bits;
+        reader.read( size, bits );
+        if( bits < ( 1ULL << ( size - 1 ) ) )
+            amplitude = bits - ( ( 1ULL << size ) - 1 );
+        else
+            amplitude = bits;
+    };
+
+    auto addDC = [&]( Reader & r, Block & blk, int component )
+    {
+        unsigned bits = 0;
+        uint8_t symbol = 0;
+        getSymbol( r, bits, symbol, dcTable( component ) );
+
+        int64_t amplitude = 0;
+        getAmplitude( r, symbol, amplitude );
+
+        blk.coefficients[0] = ( int16_t )( amplitude << Al );
+    };
+
+    auto addAC = [&]( Reader & r, Block & blk, int component )
+    {
+        for( int k = Ss; k <= Se; ++k )
+        {
+            unsigned bits = 0;
+            uint8_t symbol = 0;
+            getSymbol( r, bits, symbol, acTable( component ) );
+
+            uint8_t run = ( symbol >> 4 ) & 0xF;
+            uint8_t size = symbol & 0xF;
+
+            if( run == 0 && size == 0 )
+                break; // EOB
+
+            int64_t amplitude = 0;
+            getAmplitude( r, size, amplitude );
+            blk.coefficients[k] = ( int16_t )( amplitude << Al );
+        }
+    };
+
+    // Main loop
+    for( auto segment : sos )
+    {
+        prepare( segment );
+
+        for( auto& slice : segment->entropy )
+        {
+            Reader reader( slice.data.data(), slice.data.size(), 0 );
+
+            for( auto& mcu : acc.mcus )
+            {
+                size_t blkIndex = 0;
+                for( size_t ci = 0; ci < segment->components.size(); ++ci )
+                {
+                    // Count blocks for this component
+
+                    auto it = std::find_if( sof->components.begin(), sof->components.end(), [&]( const auto & c )
+                    {
+                        return c.componentId == segment->components[ci].componentId;
+                    } );
+
+                    uint8_t H = ( it->samplingFactors >> 4 ) & 0xF;
+                    uint8_t V = it->samplingFactors & 0x0F;
+                    size_t blocks = H * V;
+
+                    for( size_t b = 0; b < blocks; ++b )
+                    {
+                        Block& blk = mcu.blocks[blkIndex++];
+
+                        if( Ss == 0 )
+                            addDC( reader, blk, ( int )ci );
+                        else
+                            addAC( reader, blk, ( int )ci );
+                    }
+                }
+            }
+        }
+    }
+
+    // TODO: serialize mcus into `output`
 }
 
 void Huffman::compress( Format &, const Reference &, Reference & )
