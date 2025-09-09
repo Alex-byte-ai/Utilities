@@ -6,8 +6,10 @@
 #include "Image/Reference.h"
 #include "Image/PixelIO.h"
 #include "Image/Format.h"
+
 #include "Image/BMP.h"
 #include "Image/PNG.h"
+#include "Image/JPG.h"
 
 #include "Exception.h"
 #include "Basic.h"
@@ -48,6 +50,7 @@ static Format parseFormat( const Reference &ref, HeaderWriter *write, const Form
         "DIB",
         "BMP",
         "PNG",
+        "JPG",
         "ANYF"
     };
 
@@ -151,10 +154,22 @@ static Format parseFormat( const Reference &ref, HeaderWriter *write, const Form
         break;
     case 4:
         format.clear();
+        makeJpg( ref, format, write );
+        break;
+    case 5:
+        format.clear();
         if( !write )
         {
+            uint8_t jpgMarker[2] = {0xFF, 0xD8};
+            char bmpMarker[2] = {'B', 'M'};
+
             makeException( ref.bytes >= 16 );
-            if( compare( ref.link, "BM", 2 ) )
+
+            if( compare( ref.link, jpgMarker, sizeof( jpgMarker ) ) )
+            {
+                makeJpg( ref, format, write );
+            }
+            else if( compare( ref.link, bmpMarker, sizeof( bmpMarker ) ) )
             {
                 makeBmp( ref, true, true, format, write );
             }

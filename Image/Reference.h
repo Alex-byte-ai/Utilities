@@ -30,6 +30,7 @@ public:
     // '.BMP' to process data of 'bmp' files
     // '.DIB' same as 'bmp', but does not contain file header
     // '.PNG' to process data of 'png' files
+    // '.JPG' to process data of 'jpg' files
     // '.ANYF' program will make a guess, when reading, and use default format for writing. Only works for file contents
     std::optional<std::string> format;
 
