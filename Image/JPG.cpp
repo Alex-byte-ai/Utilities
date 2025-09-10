@@ -843,6 +843,7 @@ bool SegmentSOS::read( ReaderBase &r, uint16_t length )
     // Now read entropy-coded data:
 
     entropy.clear();
+    rawEntropy.clear();
     nextMarker.reset();
 
     auto slice = &entropy.emplace_back();
@@ -851,7 +852,7 @@ bool SegmentSOS::read( ReaderBase &r, uint16_t length )
     {
         uint8_t b;
         if( !readByte( b ) )
-            return true; // Accepting partial entropyData
+            return false;
 
         // Normal entropy byte
         if( b != 0xFF )
@@ -1274,9 +1275,9 @@ void Huffman::decompress( const std::vector<uint8_t>&, std::vector<uint8_t>& out
 
     struct HuffmanTable
     {
-        int minCode[17];
-        int maxCode[17];
-        int valPtr[17];
+        unsigned minCode[17];
+        unsigned maxCode[17];
+        unsigned valPtr[17];
         std::vector<uint8_t> symbols;
     };
 
@@ -1315,16 +1316,21 @@ void Huffman::decompress( const std::vector<uint8_t>&, std::vector<uint8_t>& out
         HuffmanTable ht;
         ht.symbols = t.symbols;
 
-        int code = 0;
-        int k = 0;
+        unsigned code = 0;
+        unsigned k = 0;
 
-        for( int i = 1; i <= 16; i++ )
+        ht.minCode[0] = 1;
+        ht.maxCode[0] = 0;
+        ht.valPtr[0] = 0;
+
+        for( unsigned i = 1; i <= 16; i++ )
         {
             uint8_t count = t.counts[i - 1];
             if( count == 0 )
             {
-                ht.minCode[i] = -1;
-                ht.maxCode[i] = -1;
+                ht.minCode[i] = 1;
+                ht.maxCode[i] = 0;
+                ht.valPtr[i] = 0;
             }
             else
             {
@@ -1336,6 +1342,9 @@ void Huffman::decompress( const std::vector<uint8_t>&, std::vector<uint8_t>& out
                 k += count;
             }
         }
+
+        // Validate symbols length
+        makeException( k == ht.symbols.size() );
 
         return ht;
     };
@@ -1351,6 +1360,21 @@ void Huffman::decompress( const std::vector<uint8_t>&, std::vector<uint8_t>& out
         }
     }
 
+    // Validate that every SOS selector used has a DHT entry
+    for( auto s : sos )
+    {
+        for( size_t sci = 0; sci < s->components.size(); ++sci )
+        {
+            uint8_t sel = s->components[sci].huffmanSelectors;
+            uint8_t dcid = ( sel >> 4 ) & 0x0F;
+            uint8_t acid = sel & 0x0F;
+
+            bool okDC = ( huffmanTables.find( {0, dcid} ) != huffmanTables.end() );
+            bool okAC = ( huffmanTables.find( {1, acid} ) != huffmanTables.end() );
+            makeException( okDC && okAC );
+        }
+    }
+
     auto contains = []( const HuffmanTable * table, unsigned code, unsigned bits )
     {
         // Table does not exist
@@ -1361,13 +1385,10 @@ void Huffman::decompress( const std::vector<uint8_t>&, std::vector<uint8_t>& out
         if( bits == 0 || bits > 16 )
             return false;
 
-        int mc = table->minCode[bits];
-        int xc = table->maxCode[bits];
+        unsigned mc = table->minCode[bits];
+        unsigned xc = table->maxCode[bits];
 
-        if( mc < 0 || xc < 0 )
-            return false;
-
-        if( ( unsigned )mc <= code && code <= ( unsigned )xc )
+        if( mc <= code && code <= xc )
             return true;
 
         return false;
@@ -1399,14 +1420,14 @@ void Huffman::decompress( const std::vector<uint8_t>&, std::vector<uint8_t>& out
         return &i->second;
     };
 
-    auto dcTable = [&]( int componentIndex )
+    auto dcTable = [&]( size_t componentIndex )
     {
         auto sel = currentSegment->components[componentIndex].huffmanSelectors;
         uint8_t th = ( sel >> 4 ) & 0x0F; // DC id
         return findTable( 0, th );
     };
 
-    auto acTable = [&]( int componentIndex )
+    auto acTable = [&]( size_t componentIndex )
     {
         auto sel = currentSegment->components[componentIndex].huffmanSelectors;
         uint8_t th = sel & 0x0F; // AC id
@@ -1486,6 +1507,8 @@ void Huffman::decompress( const std::vector<uint8_t>&, std::vector<uint8_t>& out
 
     auto getSymbol = [&]( Reader & reader, unsigned & bits, uint8_t & outSymbol, const HuffmanTable * table )
     {
+        makeException( table );
+
         unsigned code = 0;
         bits = 0;
         do
@@ -1494,7 +1517,8 @@ void Huffman::decompress( const std::vector<uint8_t>&, std::vector<uint8_t>& out
             reader.read( 1, bit );
             code = ( code << 1 ) | bit;
             bits++;
-            makeException( bits <= 16 ); // Huffman codes max 16 bits
+
+            makeException( bits <= 16 );
         }
         while( !contains( table, code, bits ) );
 
@@ -1512,10 +1536,16 @@ void Huffman::decompress( const std::vector<uint8_t>&, std::vector<uint8_t>& out
 
         BitList bits;
         reader.read( size, bits );
+
         if( bits < ( 1ULL << ( size - 1 ) ) )
             amplitude = bits - ( ( 1ULL << size ) - 1 );
         else
             amplitude = bits;
+
+        if( amplitude < 0 )
+            amplitude = -( ( int64_t )( ( uint64_t )( -amplitude ) << Al ) );
+        else
+            amplitude = ( int64_t )( ( uint64_t )( amplitude ) << Al );
     };
 
     // Helpers p1/m1 depend on Al (they will be recomputed when Al changes in prepare)
@@ -1529,7 +1559,7 @@ void Huffman::decompress( const std::vector<uint8_t>&, std::vector<uint8_t>& out
         return -( ( int32_t )1 << Alv );
     };
 
-    auto addAC = [&]( Reader & r, Block & blk, int component )
+    auto addAC = [&]( Reader & r, Block & blk, size_t component )
     {
         if( Ah == 0 )
         {
@@ -1557,7 +1587,7 @@ void Huffman::decompress( const std::vector<uint8_t>&, std::vector<uint8_t>& out
                 getAmplitude( r, size, amplitude );
                 if( k >= 0 && k < 64 )
                 {
-                    blk.coefficients[k] = ( int32_t )( amplitude << Al );
+                    blk.coefficients[k] = amplitude;
                     blk.written = true;
                 }
             }
@@ -1697,7 +1727,7 @@ void Huffman::decompress( const std::vector<uint8_t>&, std::vector<uint8_t>& out
         }
     };
 
-    auto addDC = [&]( Reader & r, Block & blk, int component )
+    auto addDC = [&]( Reader & r, Block & blk, size_t component )
     {
         if( Ah == 0 )
         {
@@ -1709,12 +1739,12 @@ void Huffman::decompress( const std::vector<uint8_t>&, std::vector<uint8_t>& out
             int64_t amplitude = 0;
             getAmplitude( r, symbol, amplitude );
 
-            blk.coefficients[0] = ( int32_t )( amplitude << Al );
+            blk.coefficients[0] = amplitude;
             blk.written = true;
         }
         else
         {
-            // DC refinement: single appended bit per block (binary decision).
+            // DC refinement: single appended bit per block (binary decision)
             BitList bit;
             r.read( 1, bit );
 
@@ -1761,9 +1791,9 @@ void Huffman::decompress( const std::vector<uint8_t>&, std::vector<uint8_t>& out
 
                         // Decode DC or AC depending on Ss
                         if( Ss == 0 )
-                            addDC( reader, blk, ( int )ci );
+                            addDC( reader, blk, ci );
                         else
-                            addAC( reader, blk, ( int )ci );
+                            addAC( reader, blk, ci );
                     }
                 }
             }
@@ -1859,19 +1889,18 @@ void Quantization::decompress( const std::vector<uint8_t>& input, std::vector<ui
 
     for( auto seg : dqt )
     {
-        for( const auto & tv : seg->tables )
+        for( const auto & t : seg->tables )
         {
-            std::array<int, 64> arr;
-            std::visit( [&]( const auto & table )
+            std::visit( [&]( auto & table )
             {
                 uint8_t pq_tq = table.pq_tq;
                 int tq = pq_tq & 0x0F;
-                int pq = ( pq_tq >> 4 ) & 0x0F;
 
+                std::array<int, 64> arr;
                 for( int i = 0; i < 64; ++i )
                     arr[i] = table.values[i];
                 quantMap[tq] = arr;
-            }, tv );
+            }, t );
         }
     }
 
