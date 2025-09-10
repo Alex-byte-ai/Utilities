@@ -1458,7 +1458,7 @@ void Huffman::decompress( const std::vector<uint8_t>&, std::vector<uint8_t>& out
         return mcuX * mcuY;
     };
 
-    // Variables used across slices and MCUs for progressive refinement
+    // Used across slices and MCUs for progressive refinement
     // Persists across slices within same scan
     uint32_t EOBRUN = 0;
 
@@ -1514,7 +1514,7 @@ void Huffman::decompress( const std::vector<uint8_t>&, std::vector<uint8_t>& out
         do
         {
             BitList bit;
-            reader.read( 1, bit );
+            makeException( reader.read( 1, bit ) );
             code = ( code << 1 ) | bit;
             bits++;
 
@@ -1535,7 +1535,7 @@ void Huffman::decompress( const std::vector<uint8_t>&, std::vector<uint8_t>& out
         }
 
         BitList bits;
-        reader.read( size, bits );
+        makeException( reader.read( size, bits ) );
 
         if( bits < ( 1ULL << ( size - 1 ) ) )
             amplitude = bits - ( ( 1ULL << size ) - 1 );
@@ -1561,10 +1561,13 @@ void Huffman::decompress( const std::vector<uint8_t>&, std::vector<uint8_t>& out
 
     auto addAC = [&]( Reader & r, Block & blk, size_t component )
     {
+        // Choose starting coefficient index, if spectral start is 0 then AC starts from 1 (skip DC)
+        int startK = ( Ss == 0 ) ? 1 : Ss;
+
         if( Ah == 0 )
         {
             // Initial scan
-            for( int k = Ss; k <= Se; ++k )
+            for( int k = startK; k <= Se; ++k )
             {
                 unsigned bits = 0;
                 uint8_t symbol = 0;
@@ -1595,14 +1598,12 @@ void Huffman::decompress( const std::vector<uint8_t>&, std::vector<uint8_t>& out
         else
         {
             // Refinement scan (Ah > 0)
-            const HuffmanTable* table = acTable( component );
             int p1 = p1_of( Al );
             int32_t m1 = m1_of( Al );
 
-            int k = Ss;
+            int k = startK;
 
-            // If there is an outstanding EOBRUN, handle it by appending
-            // Correction bits to already-nonzero coefficients
+            // If there is an outstanding EOBRUN, apply correction bits to already-nonzero coefficients in band
             if( EOBRUN > 0 )
             {
                 for( ; k <= Se; ++k )
@@ -1610,31 +1611,31 @@ void Huffman::decompress( const std::vector<uint8_t>&, std::vector<uint8_t>& out
                     if( blk.coefficients[k] != 0 )
                     {
                         BitList b;
-                        r.read( 1, b );
+                        makeException( r.read( 1, b ) );
                         if( b )
                         {
-                            // Only apply if the bit-plane was not already set
                             if( ( blk.coefficients[k] & p1 ) == 0 )
                             {
                                 if( blk.coefficients[k] >= 0 )
                                     blk.coefficients[k] += p1;
                                 else
                                     blk.coefficients[k] += m1;
+                                blk.written = true;
                             }
                         }
                     }
                 }
 
-                // Consume one of the EOBRUNs
                 if( EOBRUN > 0 )
                     EOBRUN--;
                 return;
             }
 
-            // Normal decode loop
+            const HuffmanTable* table = acTable( component );
+            makeException( table );
+
             while( k <= Se )
             {
-                // Get next Huffman symbol in refinement mode
                 unsigned bits = 0;
                 uint8_t symbol = 0;
                 getSymbol( r, bits, symbol, table );
@@ -1644,20 +1645,21 @@ void Huffman::decompress( const std::vector<uint8_t>&, std::vector<uint8_t>& out
 
                 if( s != 0 )
                 {
-                    // s should be 1 for refinement new-nonzero, but we tolerate other values
-                    // Read one sign bit: new-nonzero sign
+                    // New nonzero, read sign
                     BitList signbit;
-                    r.read( 1, signbit );
+                    makeException( r.read( 1, signbit ) );
                     int32_t newval = signbit ? p1 : m1;
 
-                    // Advance over already-nonzero coefficients and r zeros, applying correction bits to the already-nonzero coefficients
+                    // Advance and apply correction bits to already-nonzero coefficients while consuming runs
                     do
                     {
-                        if( k > Se ) break;
+                        if( k > Se )
+                            break;
+
                         if( blk.coefficients[k] != 0 )
                         {
                             BitList corr;
-                            r.read( 1, corr );
+                            makeException( r.read( 1, corr ) );
                             if( corr )
                             {
                                 if( ( blk.coefficients[k] & p1 ) == 0 )
@@ -1666,28 +1668,28 @@ void Huffman::decompress( const std::vector<uint8_t>&, std::vector<uint8_t>& out
                                         blk.coefficients[k] += p1;
                                     else
                                         blk.coefficients[k] += m1;
+                                    blk.written = true;
                                 }
                             }
                         }
                         else
                         {
-                            // One zero consumed of the run
+                            // One zero consumed
                             run--;
                             if( run < 0 )
                                 break;
                         }
+
                         k++;
                     }
                     while( k <= Se );
 
-                    // Place newly-nonzero coefficient at current k (if within band)
                     if( k <= Se )
                     {
                         blk.coefficients[k] = newval;
                         blk.written = true;
                     }
 
-                    // Move to next coefficient after placing new non-zero
                     k++;
                 }
                 else
@@ -1695,19 +1697,16 @@ void Huffman::decompress( const std::vector<uint8_t>&, std::vector<uint8_t>& out
                     // If s == 0 either ZRL (run==15) or EOBRUN (run != 15)
                     if( run == 15 )
                     {
-                        // ZRL: skip 15 zeros in band
                         k += 15;
                         continue;
                     }
                     else
                     {
-                        // EOBrun: run length is (1 << run) + appended bits
                         uint32_t e = 1u << run;
                         if( run )
                         {
-                            // Read 'run' appended bits
                             BitList appended = 0;
-                            r.read( run, appended );
+                            makeException( r.read( run, appended ) );
                             e += ( uint32_t ) appended;
                         }
 
@@ -1717,13 +1716,10 @@ void Huffman::decompress( const std::vector<uint8_t>&, std::vector<uint8_t>& out
                             e--; // We are processing one band occurrence now
 
                         EOBRUN = e;
-                        break; // End-of-band for this block
+                        break;
                     }
                 }
-            } // While k <= Se
-
-            // If EOBRUN > 0, for the *remaining* blocks, these EOBRUNs will be considered
-            // (EOBRUN is kept in outer state so subsequent MCUs/slices see it)
+            } // While
         }
     };
 
@@ -1731,7 +1727,7 @@ void Huffman::decompress( const std::vector<uint8_t>&, std::vector<uint8_t>& out
     {
         if( Ah == 0 )
         {
-            // initial DC pass: same as before (Huffman-coded category + amplitude)
+            // Initial DC pass: Huffman-coded category + amplitude
             unsigned bits = 0;
             uint8_t symbol = 0;
             getSymbol( r, bits, symbol, dcTable( component ) );
@@ -1746,7 +1742,7 @@ void Huffman::decompress( const std::vector<uint8_t>&, std::vector<uint8_t>& out
         {
             // DC refinement: single appended bit per block (binary decision)
             BitList bit;
-            r.read( 1, bit );
+            makeException( r.read( 1, bit ) );
 
             int p1 = p1_of( Al );
             if( bit )
@@ -1784,15 +1780,15 @@ void Huffman::decompress( const std::vector<uint8_t>&, std::vector<uint8_t>& out
 
                     for( size_t b = 0; b < blocks; ++b )
                     {
-                        // Sanity check index
                         makeException( blkIndex < mcu.blocks.size() );
-
                         Block& blk = mcu.blocks[blkIndex++];
 
-                        // Decode DC or AC depending on Ss
+                        // If spectral range includes DC, decode DC first
                         if( Ss == 0 )
                             addDC( reader, blk, ci );
-                        else
+
+                        // If spectral range includes AC coefficients, decode them
+                        if( Se >= 1 )
                             addAC( reader, blk, ci );
                     }
                 }
@@ -1808,7 +1804,7 @@ void Huffman::decompress( const std::vector<uint8_t>&, std::vector<uint8_t>& out
     output.clear();
     write_u32_le( output, ( uint32_t )totalBlocks );
 
-    // For each MCU in scan order, append its blocks in the same order they were decoded.
+    // For each MCU in scan order, append its blocks in the same order they were decoded
     for( auto &mcu : acc.mcus )
     {
         for( auto &blk : mcu.blocks )
@@ -1818,10 +1814,10 @@ void Huffman::decompress( const std::vector<uint8_t>&, std::vector<uint8_t>& out
 
             // Inverse zigzag
             int32_t natural[64] = {0};
-            for( int i = 0; i < 64; ++i )
+            for( size_t i = 0; i < 64; ++i )
                 natural[ ZigZag[i] ] = blk.coefficients[i];
 
-            for( int i = 0; i < 64; ++i )
+            for( size_t i = 0; i < 64; ++i )
                 write_i32_le( output, natural[i] );
         }
     }
