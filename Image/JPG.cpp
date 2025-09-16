@@ -1356,21 +1356,25 @@ void Huffman::decompress( const std::vector<uint8_t>&, std::vector<uint8_t>& out
         {
             uint8_t tc = ( table.tc_th >> 4 ) & 0x0F;
             uint8_t th = table.tc_th & 0x0F;
-            huffmanTables[ {tc, th}] = buildTable( table );
+
+            auto key = std::make_pair( tc, th );
+            makeException( huffmanTables.find( key ) == huffmanTables.end() );
+
+            huffmanTables.emplace( key, buildTable( table ) );
         }
     }
 
     // Validate that every SOS selector used has a DHT entry
     for( auto s : sos )
     {
-        for( size_t sci = 0; sci < s->components.size(); ++sci )
+        for( const auto& component : s->components )
         {
-            uint8_t sel = s->components[sci].huffmanSelectors;
+            uint8_t sel = component.huffmanSelectors;
             uint8_t dcid = ( sel >> 4 ) & 0x0F;
             uint8_t acid = sel & 0x0F;
 
-            bool okDC = ( huffmanTables.find( {0, dcid} ) != huffmanTables.end() );
-            bool okAC = ( huffmanTables.find( {1, acid} ) != huffmanTables.end() );
+            bool okDC = huffmanTables.find( {0, dcid} ) != huffmanTables.end();
+            bool okAC = huffmanTables.find( {1, acid} ) != huffmanTables.end();
             makeException( okDC && okAC );
         }
     }
@@ -1382,54 +1386,48 @@ void Huffman::decompress( const std::vector<uint8_t>&, std::vector<uint8_t>& out
             return false;
 
         // Invalid length
-        if( bits == 0 || bits > 16 )
+        if( bits <= 0 || 16 < bits )
             return false;
 
         unsigned mc = table->minCode[bits];
         unsigned xc = table->maxCode[bits];
 
-        if( mc <= code && code <= xc )
-            return true;
-
-        return false;
+        return mc <= code && code <= xc;
     };
 
     auto lookup = []( const HuffmanTable * table, unsigned code, unsigned bits )
     {
-        // Return the symbol from table assuming contains(...) already true
         makeException( table );
-        makeException( bits > 0 && bits <= 16 );
+        makeException( 0 < bits && bits <= 16 );
 
-        int minC = table->minCode[bits];
-        makeException( minC >= 0 );
+        unsigned minC = table->minCode[bits];
+        makeException( code >= minC );
 
-        int index = table->valPtr[bits] + ( int )( code - ( unsigned ) minC );
-        makeException( index >= 0 && index < ( int ) table->symbols.size() );
+        unsigned index = table->valPtr[bits] + ( code - minC );
+        makeException( index < table->symbols.size() );
 
         return table->symbols[index];
     };
 
     auto findTable = [&]( uint8_t tc, uint8_t th ) -> const HuffmanTable *
     {
-        auto key = std::make_pair( tc, th );
-
-        auto i = huffmanTables.find( key );
+        auto i = huffmanTables.find( std::make_pair( tc, th ) );
         if( i == huffmanTables.end() )
             return nullptr;
 
         return &i->second;
     };
 
-    auto dcTable = [&]( size_t componentIndex )
+    auto dcTable = [&]( auto & component )
     {
-        auto sel = currentSegment->components[componentIndex].huffmanSelectors;
+        auto sel = component.huffmanSelectors;
         uint8_t th = ( sel >> 4 ) & 0x0F; // DC id
         return findTable( 0, th );
     };
 
-    auto acTable = [&]( size_t componentIndex )
+    auto acTable = [&]( auto & component )
     {
-        auto sel = currentSegment->components[componentIndex].huffmanSelectors;
+        auto sel = component.huffmanSelectors;
         uint8_t th = sel & 0x0F; // AC id
         return findTable( 1, th );
     };
@@ -1470,8 +1468,6 @@ void Huffman::decompress( const std::vector<uint8_t>&, std::vector<uint8_t>& out
         Ah = ( s->successiveApproximation >> 4 ) & 0x0F;
         Al = s->successiveApproximation & 0x0F;
 
-        // When starting a *new* scan (first time prepare is called for this scan), EOBRUN should start at 0
-        // We choose to zero EOBRUN when starting a new SOS
         EOBRUN = 0;
 
         if( acc.mcus.empty() )
@@ -1559,14 +1555,14 @@ void Huffman::decompress( const std::vector<uint8_t>&, std::vector<uint8_t>& out
         return -( ( int32_t )1 << Alv );
     };
 
-    auto addAC = [&]( Reader & r, Block & blk, size_t component )
+    auto addAC = [&]( Reader & r, Block & blk, auto & component )
     {
         // Choose starting coefficient index, if spectral start is 0 then AC starts from 1 (skip DC)
         int startK = ( Ss == 0 ) ? 1 : Ss;
 
         if( Ah == 0 )
         {
-            // Initial scan
+            // Initial scan (first pass)
             for( int k = startK; k <= Se; ++k )
             {
                 unsigned bits = 0;
@@ -1576,23 +1572,22 @@ void Huffman::decompress( const std::vector<uint8_t>&, std::vector<uint8_t>& out
                 uint8_t run = ( symbol >> 4 ) & 0xF;
                 uint8_t size = symbol & 0xF;
 
+                makeException( size <= 11 );
+
                 if( run == 0 && size == 0 )
                     break; // EOB
 
                 if( run > 0 )
-                {
                     k += run;
-                    if( k > 63 ) // Sanity check
-                        break;
-                }
+
+                makeException( 0 <= k && k < 64 );
 
                 int64_t amplitude = 0;
                 getAmplitude( r, size, amplitude );
-                if( k >= 0 && k < 64 )
-                {
-                    blk.coefficients[k] = amplitude;
-                    blk.written = true;
-                }
+
+                int zz = ZigZag[k];
+                blk.coefficients[zz] = ( int32_t )amplitude;
+                blk.written = true;
             }
         }
         else
@@ -1608,18 +1603,19 @@ void Huffman::decompress( const std::vector<uint8_t>&, std::vector<uint8_t>& out
             {
                 for( ; k <= Se; ++k )
                 {
-                    if( blk.coefficients[k] != 0 )
+                    int zz = ZigZag[k];
+                    if( blk.coefficients[zz] != 0 )
                     {
                         BitList b;
                         makeException( r.read( 1, b ) );
                         if( b )
                         {
-                            if( ( blk.coefficients[k] & p1 ) == 0 )
+                            if( ( blk.coefficients[zz] & p1 ) == 0 )
                             {
-                                if( blk.coefficients[k] >= 0 )
-                                    blk.coefficients[k] += p1;
+                                if( blk.coefficients[zz] >= 0 )
+                                    blk.coefficients[zz] += p1;
                                 else
-                                    blk.coefficients[k] += m1;
+                                    blk.coefficients[zz] += m1;
                                 blk.written = true;
                             }
                         }
@@ -1656,25 +1652,26 @@ void Huffman::decompress( const std::vector<uint8_t>&, std::vector<uint8_t>& out
                         if( k > Se )
                             break;
 
-                        if( blk.coefficients[k] != 0 )
+                        int zz = ZigZag[k];
+                        if( blk.coefficients[zz] != 0 )
                         {
                             BitList corr;
                             makeException( r.read( 1, corr ) );
                             if( corr )
                             {
-                                if( ( blk.coefficients[k] & p1 ) == 0 )
+                                if( ( blk.coefficients[zz] & p1 ) == 0 )
                                 {
-                                    if( blk.coefficients[k] >= 0 )
-                                        blk.coefficients[k] += p1;
+                                    if( blk.coefficients[zz] >= 0 )
+                                        blk.coefficients[zz] += p1;
                                     else
-                                        blk.coefficients[k] += m1;
+                                        blk.coefficients[zz] += m1;
                                     blk.written = true;
                                 }
                             }
                         }
                         else
                         {
-                            // One zero consumed
+                            // One zero consumed from run
                             run--;
                             if( run < 0 )
                                 break;
@@ -1686,7 +1683,8 @@ void Huffman::decompress( const std::vector<uint8_t>&, std::vector<uint8_t>& out
 
                     if( k <= Se )
                     {
-                        blk.coefficients[k] = newval;
+                        int zz = ZigZag[k];
+                        blk.coefficients[zz] = newval;
                         blk.written = true;
                     }
 
@@ -1723,7 +1721,7 @@ void Huffman::decompress( const std::vector<uint8_t>&, std::vector<uint8_t>& out
         }
     };
 
-    auto addDC = [&]( Reader & r, Block & blk, size_t component )
+    auto addDC = [&]( Reader & r, Block & blk, auto & component )
     {
         if( Ah == 0 )
         {
@@ -1765,12 +1763,12 @@ void Huffman::decompress( const std::vector<uint8_t>&, std::vector<uint8_t>& out
             for( auto& mcu : acc.mcus )
             {
                 size_t blkIndex = 0;
-                for( size_t ci = 0; ci < segment->components.size(); ++ci )
+                for( auto& sc : segment->components )
                 {
                     // Locate SOF component for sampling factors
                     auto it = std::find_if( sof->components.begin(), sof->components.end(), [&]( const auto & c )
                     {
-                        return c.componentId == segment->components[ci].componentId;
+                        return c.componentId == sc.componentId;
                     } );
                     makeException( it != sof->components.end() );
 
@@ -1785,23 +1783,24 @@ void Huffman::decompress( const std::vector<uint8_t>&, std::vector<uint8_t>& out
 
                         // If spectral range includes DC, decode DC first
                         if( Ss == 0 )
-                            addDC( reader, blk, ci );
+                            addDC( reader, blk, sc );
 
                         // If spectral range includes AC coefficients, decode them
                         if( Se >= 1 )
-                            addAC( reader, blk, ci );
+                            addAC( reader, blk, sc );
                     }
                 }
             }
         }
     }
 
+    output.clear();
+
     // Count total blocks
     size_t totalBlocks = 0;
     for( auto &mcu : acc.mcus )
         totalBlocks += mcu.blocks.size();
 
-    output.clear();
     write_u32_le( output, ( uint32_t )totalBlocks );
 
     // For each MCU in scan order, append its blocks in the same order they were decoded
@@ -1809,7 +1808,6 @@ void Huffman::decompress( const std::vector<uint8_t>&, std::vector<uint8_t>& out
     {
         for( auto &blk : mcu.blocks )
         {
-            // Component id (SOF componentId)
             output.push_back( blk.componentId );
 
             // Inverse zigzag
