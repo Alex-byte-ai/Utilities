@@ -840,7 +840,7 @@ bool SegmentSOS::read( ReaderBase &r, uint16_t length )
         }
     }
 
-    // Now read entropy-coded data:
+    // Read entropy-coded data:
 
     entropy.clear();
     rawEntropy.clear();
@@ -888,7 +888,7 @@ bool SegmentSOS::read( ReaderBase &r, uint16_t length )
             }
 
             // Restart marker
-            if( c >= 0xD0 && c <= 0xD7 )
+            if( 0xD0 <= c && c <= 0xD7 )
             {
                 slice = &entropy.emplace_back();
                 slice->restartMarker = c;
@@ -1356,10 +1356,9 @@ void Huffman::decompress( const std::vector<uint8_t>&, std::vector<uint8_t>& out
         {
             uint8_t tc = ( table.tc_th >> 4 ) & 0x0F;
             uint8_t th = table.tc_th & 0x0F;
-
             auto key = std::make_pair( tc, th );
-            makeException( huffmanTables.find( key ) == huffmanTables.end() );
 
+            makeException( huffmanTables.find( key ) == huffmanTables.end() );
             huffmanTables.emplace( key, buildTable( table ) );
         }
     }
@@ -1376,6 +1375,29 @@ void Huffman::decompress( const std::vector<uint8_t>&, std::vector<uint8_t>& out
             bool okDC = huffmanTables.find( {0, dcid} ) != huffmanTables.end();
             bool okAC = huffmanTables.find( {1, acid} ) != huffmanTables.end();
             makeException( okDC && okAC );
+        }
+    }
+
+    // Verify reader bit-order is MSB-first
+    {
+        std::vector<uint8_t> sample{94, 15, 233, 85, 193, 17};
+
+        Reader probe( sample.data(), sample.size(), 0 );
+
+        for( size_t j = 0; j < sample.size(); ++j )
+        {
+            // Read 8 bits one bit at a time from sample and assemble into a byte
+            uint8_t assembled = 0;
+            for( int i = 0; i < 8; ++i )
+            {
+                BitList b = 0;
+                makeException( probe.read( 1, b ) );
+                // If reader is MSB-first, the first read bit is the MSB of the byte
+                assembled = ( uint8_t )( ( assembled << 1 ) | ( uint8_t )b );
+            }
+
+            // Compare assembled to the first raw entropy byte
+            makeException( assembled == sample[j] );
         }
     }
 
@@ -1448,11 +1470,13 @@ void Huffman::decompress( const std::vector<uint8_t>&, std::vector<uint8_t>& out
     auto mcuCount = [&]()
     {
         auto [maxH, maxV] = mcuGeometry();
+
         uint16_t width  = sof->header.imageWidth;
         uint16_t height = sof->header.imageHeight;
 
         size_t mcuX = ( width  + ( 8 * maxH - 1 ) ) / ( 8 * maxH );
         size_t mcuY = ( height + ( 8 * maxV - 1 ) ) / ( 8 * maxV );
+
         return mcuX * mcuY;
     };
 
@@ -1463,42 +1487,13 @@ void Huffman::decompress( const std::vector<uint8_t>&, std::vector<uint8_t>& out
     auto prepare = [&]( const SegmentSOS * s )
     {
         currentSegment = s;
+
         Ss = s->spectralStart;
         Se = s->spectralEnd;
         Ah = ( s->successiveApproximation >> 4 ) & 0x0F;
         Al = s->successiveApproximation & 0x0F;
 
         EOBRUN = 0;
-
-        if( acc.mcus.empty() )
-        {
-            acc.mcus.resize( mcuCount() );
-            auto [maxH, maxV] = mcuGeometry();
-
-            for( auto& m : acc.mcus )
-            {
-                for( auto& sc : s->components )
-                {
-                    // Find corresponding SOF component to read sampling
-                    auto it = std::find_if( sof->components.begin(), sof->components.end(), [&]( const auto & c )
-                    {
-                        return c.componentId == sc.componentId;
-                    } );
-                    makeException( it != sof->components.end() );
-
-                    uint8_t H = ( it->samplingFactors >> 4 ) & 0xF;
-                    uint8_t V = it->samplingFactors & 0x0F;
-
-                    size_t blocks = H * V;
-                    for( size_t i = 0; i < blocks; ++i )
-                    {
-                        Block blk;
-                        blk.componentId = sc.componentId;
-                        m.blocks.emplace_back( std::move( blk ) );
-                    }
-                }
-            }
-        }
     };
 
     auto getSymbol = [&]( Reader & reader, unsigned & bits, uint8_t & outSymbol, const HuffmanTable * table )
@@ -1507,6 +1502,7 @@ void Huffman::decompress( const std::vector<uint8_t>&, std::vector<uint8_t>& out
 
         unsigned code = 0;
         bits = 0;
+
         do
         {
             BitList bit;
@@ -1751,7 +1747,9 @@ void Huffman::decompress( const std::vector<uint8_t>&, std::vector<uint8_t>& out
         }
     };
 
-    // Main loop: decode into acc.mcus blocks
+    acc.mcus.resize( mcuCount() );
+
+    // Main loop
     for( auto segment : sos )
     {
         prepare( segment );
@@ -1762,7 +1760,6 @@ void Huffman::decompress( const std::vector<uint8_t>&, std::vector<uint8_t>& out
 
             for( auto& mcu : acc.mcus )
             {
-                size_t blkIndex = 0;
                 for( auto& sc : segment->components )
                 {
                     // Locate SOF component for sampling factors
@@ -1778,8 +1775,8 @@ void Huffman::decompress( const std::vector<uint8_t>&, std::vector<uint8_t>& out
 
                     for( size_t b = 0; b < blocks; ++b )
                     {
-                        makeException( blkIndex < mcu.blocks.size() );
-                        Block& blk = mcu.blocks[blkIndex++];
+                        auto& blk = mcu.blocks.emplace_back();
+                        blk.componentId = sc.componentId;
 
                         // If spectral range includes DC, decode DC first
                         if( Ss == 0 )
@@ -2242,7 +2239,7 @@ void BlockGrouping::decompress( const std::vector<uint8_t>& input, std::vector<u
     {
         for( size_t mx = 0; mx < mcusX; ++mx )
         {
-            // per-component counters for this MCU
+            // Per-component counters for this MCU
             std::vector<size_t> placed( compCount, 0 );
 
             for( size_t sofci = 0; sofci < compCount; ++sofci )
@@ -2303,19 +2300,19 @@ void BlockGrouping::decompress( const std::vector<uint8_t>& input, std::vector<u
                         ++inIndex;
                     }
                 }
-            } // sof components
+            } // SOF components
         }
     }
 
     // Now serialize BlockGrouping output
     output.clear();
-    // widthBlocks = mcusX * maxH ; heightBlocks = mcusY * maxV
+
     uint16_t widthBlocks = uint16_t( mcusX * maxH );
     uint16_t heightBlocks = uint16_t( mcusY * maxV );
     write_u16_le( output, widthBlocks );
     write_u16_le( output, heightBlocks );
 
-    // components: number of SOF components
+    // Components: number of SOF components
     output.push_back( ( uint8_t ) compCount );
 
     for( size_t ci = 0; ci < compCount; ++ci )
@@ -2376,12 +2373,15 @@ void Scale::decompress( const std::vector<uint8_t>& input, std::vector<uint8_t>&
         output.clear();
         return;
     }
+
     uint16_t widthBlocks = read_u16_le( p );
     p += 2;
     remain -= 2;
+
     uint16_t heightBlocks = read_u16_le( p );
     p += 2;
     remain -= 2;
+
     uint8_t components = *p++;
     remain -= 1;
 
@@ -2404,13 +2404,14 @@ void Scale::decompress( const std::vector<uint8_t>& input, std::vector<uint8_t>&
             output.clear();
             return;
         }
+
         CompIn c;
         c.compId = *p++;
         c.sampling = *p++;
         c.qId = *p++;
         c.numBlocks = read_u32_le( p );
         p += 4;
-        remain -= ( 1 + 1 + 1 + 4 );
+        remain -= 1 + 1 + 1 + 4;
 
         size_t need = size_t( c.numBlocks ) * 64 * 2;
         if( remain < need )
@@ -2452,19 +2453,23 @@ void Scale::decompress( const std::vector<uint8_t>& input, std::vector<uint8_t>&
         int W;
         int H;
         std::vector<int16_t> pixels;
-    }; // pixels size W*H
+    };
     std::vector<CompPixel> compPixels;
     compPixels.reserve( comps.size() );
 
     for( auto const &ci : comps )
     {
-        // find SOF sampling for this comp
+        // Find SOF sampling for this comp
         int sofIdx = -1;
-        for( size_t k = 0; k < sof->components.size(); ++k ) if( sof->components[k].componentId == ci.compId )
+        for( size_t k = 0; k < sof->components.size(); ++k )
+        {
+            if( sof->components[k].componentId == ci.compId )
             {
                 sofIdx = int( k );
                 break;
             }
+        }
+
         makeException( sofIdx >= 0 );
         uint8_t H = ( sof->components[sofIdx].samplingFactors >> 4 ) & 0x0F;
         uint8_t V = sof->components[sofIdx].samplingFactors & 0x0F;
@@ -2489,7 +2494,7 @@ void Scale::decompress( const std::vector<uint8_t>& input, std::vector<uint8_t>&
             {
                 size_t blockIndex = by * compBlockW + bx;
                 const int16_t *blk = ci.blocks.data() + blockIndex * 64;
-                // copy 8x8
+                // Copy 8x8
                 for( int ry = 0; ry < 8; ++ry )
                 {
                     int dstY = int( by * 8 + ry );
@@ -2514,11 +2519,11 @@ void Scale::decompress( const std::vector<uint8_t>& input, std::vector<uint8_t>&
 
     for( auto &cp : compPixels )
     {
-        // element size = 2 (i16)
+        // Element size = 2 (i16)
         output.push_back( cp.compId );
         output.push_back( 2u );
 
-        // resize dest buffer and fill
+        // Resize dest buffer and fill
         // We'll sample source as floating coordinates: sx = (x + 0.5) * srcW / imageW - 0.5
         double sxFactor = double( cp.W ) / double( imageW );
         double syFactor = double( cp.H ) / double( imageH );
@@ -2590,12 +2595,15 @@ void YCbCrK::decompress( const std::vector<uint8_t>& input, std::vector<uint8_t>
         output.clear();
         return;
     }
+
     uint16_t width = read_u16_le( p );
     p += 2;
     remain -= 2;
+
     uint16_t height = read_u16_le( p );
     p += 2;
     remain -= 2;
+
     uint8_t components = *p++;
     remain -= 1;
 
@@ -2615,20 +2623,24 @@ void YCbCrK::decompress( const std::vector<uint8_t>& input, std::vector<uint8_t>
             output.clear();
             return;
         }
+
         uint8_t compId = *p++;
         uint8_t elemSize = *p++;
         remain -= 2;
+
         if( elemSize != 2 )
         {
             output.clear();    // we only support 2 here
             return;
         }
+
         size_t need = size_t( width ) * size_t( height ) * 2;
         if( remain < need )
         {
             output.clear();
             return;
         }
+
         Comp c;
         c.id = compId;
         c.samples.resize( size_t( width ) * size_t( height ) );
@@ -2649,12 +2661,12 @@ void YCbCrK::decompress( const std::vector<uint8_t>& input, std::vector<uint8_t>
     };
 
     // Decide conversion:
-    // - If 1 component => grayscale
-    // - If 3 components => assume Y,Cb,Cr (component IDs typical: 1=Y,2=Cb,3=Cr). We'll map by id position.
-    // - If 4 components => treat as Y,Cb,Cr,K -> convert YCbCr->RGB then apply K as multiplication.
+    // If 1 component, treat as grayscale
+    // If 3 components, treat as Y,Cb,Cr (component IDs typical: 1=Y,2=Cb,3=Cr). We'll map by id position.
+    // If 4 components, treat as Y,Cb,Cr,K -> convert YCbCr->RGB then apply K as multiplication.
 
     output.clear();
-    // write header width,height, channels, bitDepth
+    // Write header width,height, channels, bitDepth
     write_u16_le( output, width );
     write_u16_le( output, height );
     uint8_t outChannels = 3;
@@ -2662,14 +2674,23 @@ void YCbCrK::decompress( const std::vector<uint8_t>& input, std::vector<uint8_t>
     output.push_back( outChannels );
     output.push_back( outBitDepth );
 
-    // helper to clamp
-    auto clamp8 = []( int v )->uint8_t { if( v < 0 ) return 0; if( v > 255 ) return 255; return ( uint8_t )v; };
+    // Helper to clamp
+    auto clamp8 = []( int v ) -> uint8_t
+    {
+        if( v < 0 )
+            return 0;
 
-size_t pixCount = size_t( width ) * size_t( height );
+        if( v > 255 )
+            return 255;
+
+        return ( uint8_t )v;
+    };
+
+    size_t pixCount = size_t( width ) * size_t( height );
 
     if( components == 1 )
     {
-        // grayscale -> replicate to RGB
+        // Grayscale, replicate to RGB
         auto &s = comps[0].samples;
         for( size_t i = 0; i < pixCount; ++i )
         {
@@ -2683,14 +2704,14 @@ size_t pixCount = size_t( width ) * size_t( height );
 
     if( components >= 3 )
     {
-        // find which components correspond to Y,Cb,Cr
-        // naive: assume first is Y, second Cb, third Cr (or search ids 1/2/3)
+        // Find which components correspond to Y,Cb,Cr
+        // Naive: assume first is Y, second Cb, third Cr (or search ids 1/2/3)
         int yIdx = findComp( 1 );
         int cbIdx = findComp( 2 );
         int crIdx = findComp( 3 );
         if( yIdx < 0 || cbIdx < 0 || crIdx < 0 )
         {
-            // fallback: use order as given
+            // Fallback: use order as given
             yIdx = 0;
             cbIdx = 1;
             crIdx = 2;
@@ -2700,7 +2721,7 @@ size_t pixCount = size_t( width ) * size_t( height );
         auto &Cb = comps[cbIdx].samples;
         auto &Cr = comps[crIdx].samples;
 
-        // convert: inputs are i16 possibly before level shift -> add 128
+        // Convert: inputs are i16 possibly before level shift -> add 128
         for( size_t i = 0; i < pixCount; ++i )
         {
             double y = double( Y[i] ) + 128.0;
@@ -2716,13 +2737,13 @@ size_t pixCount = size_t( width ) * size_t( height );
             output.push_back( clamp8( int( std::lround( b ) ) ) );
         }
 
-        // if there's a 4th component (K), apply it as multiply (optional)
+        // If there's a 4th component (K), apply it as multiply (optional)
         if( components >= 4 )
         {
             int kIdx = findComp( 4 );
             if( kIdx >= 0 )
             {
-                // apply K: current output is in RGB interleaved, modify in-place
+                // Apply K: current output is in RGB interleaved, modify in-place
                 auto &K = comps[kIdx].samples;
                 for( size_t i = 0; i < pixCount; ++i )
                 {
@@ -2743,7 +2764,7 @@ size_t pixCount = size_t( width ) * size_t( height );
         return;
     }
 
-    // fallback: unexpected components, produce black
+    // Fallback: unexpected components, produce black
     for( size_t i = 0; i < pixCount; ++i )
     {
         output.push_back( 0 );
@@ -2783,12 +2804,15 @@ void CMYK::decompress( const std::vector<uint8_t>& input, std::vector<uint8_t>& 
         output.clear();
         return;
     }
+
     uint16_t width = read_u16_le( p );
     p += 2;
     remain -= 2;
+
     uint16_t height = read_u16_le( p );
     p += 2;
     remain -= 2;
+
     uint8_t components = *p++;
     remain -= 1;
 
@@ -2833,7 +2857,7 @@ void CMYK::decompress( const std::vector<uint8_t>& input, std::vector<uint8_t>& 
         comps.push_back( std::move( c ) );
     }
 
-    // find C,M,Y,K indices (try by id, fallback to order)
+    // Find C,M,Y,K indices (try by id, fallback to order)
     auto findComp = [&]( uint8_t id )->int
     {
         for( size_t i = 0; i < comps.size(); ++i ) if( comps[i].id == id ) return int( i );
@@ -2846,12 +2870,13 @@ void CMYK::decompress( const std::vector<uint8_t>& input, std::vector<uint8_t>& 
     int kIdx = findComp( 4 );
     if( cIdx < 0 || mIdx < 0 || yIdx < 0 || kIdx < 0 )
     {
-        // fallback to first four in order
+        // Fallback to first four in order
         if( comps.size() < 4 )
         {
             output.clear();
             return;
         }
+
         cIdx = 0;
         mIdx = 1;
         yIdx = 2;
@@ -2862,17 +2887,26 @@ void CMYK::decompress( const std::vector<uint8_t>& input, std::vector<uint8_t>& 
     output.clear();
     write_u16_le( output, width );
     write_u16_le( output, height );
-    output.push_back( 3 ); // channels
-    output.push_back( 8 ); // bitDepth
+    output.push_back( 3 ); // Channels
+    output.push_back( 8 ); // Bit depth
 
     auto &C = comps[cIdx].samples;
     auto &M = comps[mIdx].samples;
     auto &Y = comps[yIdx].samples;
     auto &K = comps[kIdx].samples;
 
-    auto clamp8 = []( int v )->uint8_t { if( v < 0 ) return 0; if( v > 255 ) return 255; return ( uint8_t )v; };
+    auto clamp8 = []( int v ) -> uint8_t
+    {
+        if( v < 0 )
+            return 0;
 
-for( size_t i = 0; i < pixCount; ++i )
+        if( v > 255 )
+            return 255;
+
+        return ( uint8_t )v;
+    };
+
+    for( size_t i = 0; i < pixCount; ++i )
     {
         double c = ( double( C[i] ) + 128.0 ) / 255.0;
         double m = ( double( M[i] ) + 128.0 ) / 255.0;
