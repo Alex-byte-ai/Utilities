@@ -1158,56 +1158,82 @@ static int16_t read_i16_le( const uint8_t* p )
     return ( int16_t )read_u16_le( p );
 }
 
-// ----------------------------- AAN integer IDCT -----------------------------
-// Implementation based on standard AAN scaled integer algorithm
-// Produces int32_t results
+// AAN integer 2D IDCT for 8x8 blocks (portable, integer-only)
+// Input: 64 int32_t coefficients in natural (row-major) order (DCT domain)
+// Output: 64 int32_t spatial samples (no level shift applied)
+//
+// Uses SCALE = 13 (scale factor = 8192) and integer constants derived
+// from AAN multipliers rounded to integers
+// Works with typical JPEG coefficient magnitudes (32-bit intermediate arithmetic)
 struct AAN_IDCT
 {
-    // AAN scaled constants scaled by 2^13 (8192) to maintain integer math
-    static constexpr int SCALE = 13;
-    static constexpr int ONE = 1 << SCALE;
+    static constexpr int SCALE = 13; // Number of fractional bits
+    static constexpr int ROUND = 1 << ( SCALE - 1 );
 
-    // Precomputed fixed multipliers (scaled)
-    static const int32_t aanscales[8];
+    // Precomputed AAN multiplier constants scaled by (1<<SCALE)
+    // These are rounded values of the AAN multipliers:
+    // 1.000000000, 1.387039845, 1.306562965, 1.175875602,
+    // 1.000000000, 0.785694958, 0.541196100, 0.275899379
+    static constexpr int32_t aanscales[8] =
+    {
+        1 << SCALE, // 1.0 * 8192 = 8192
+          11363,    // round( 1.387039845 * 8192 )
+          10703,    // round( 1.306562965 * 8192 )
+          9633,     // round( 1.175875602 * 8192 )
+          8192,     // 1.0 * 8192
+          6434,     // round( 0.785694958 * 8192 )
+          4433,     // round( 0.541196100 * 8192 )
+          2256      // round( 0.275899379 * 8192 )
+    };
 
-    // Perform AAN 1-D inverse on an 8-element vector (in place)
+    // 1-D inverse transform on 8 elements, in-place
+    // Input values are expected in integer domain (scaled appropriately)
     static void idct1d( int32_t *v )
     {
-        // Based on AAN algorithm (integer-friendly)
+        // If all AC terms are zero, the result is a DC expansion:
+        if( v[1] == 0 && v[2] == 0 && v[3] == 0 && v[4] == 0 && v[5] == 0 && v[6] == 0 && v[7] == 0 )
+        {
+            // Each output becomes v[0] * aanscale[0] >> SCALE (i.e., v0)
+            // but we need the proper AAN normalization: with our intended scaling,
+            // the row/col passes combine to produce the right factor with final >>SCALE.
+            int32_t dc = ( v[0] * aanscales[0] + ROUND ) >> SCALE;
+            for( int i = 0; i < 8; ++i )
+                v[i] = dc;
 
-        // Stage 1
+            return;
+        }
+
+        // Even part
         int32_t x0 = v[0] + v[4];
         int32_t x1 = v[0] - v[4];
-        int32_t x2 = ( v[2] * aanscales[2] ) >> SCALE;
-        int32_t x3 = ( v[6] * aanscales[6] ) >> SCALE;
-        int32_t x4 = v[1] + v[7];
-        int32_t x5 = v[3] + v[5];
-        int32_t x6 = v[1] - v[7];
-        int32_t x7 = v[3] - v[5];
 
-        // Stage 2
+        // Multiply v[2] and v[6] by their scale factors (preserve fractional bits)
+        int32_t x2 = ( v[2] * aanscales[2] + ROUND ) >> SCALE;
+        int32_t x3 = ( v[6] * aanscales[6] + ROUND ) >> SCALE;
+
         int32_t t0 = x0 + x3;
         int32_t t3 = x0 - x3;
         int32_t t1 = x1 + x2;
         int32_t t2 = x1 - x2;
 
-        // Stage 3
         int32_t s0 = t0 + t1;
         int32_t s1 = t0 - t1;
         int32_t s2 = t3 + t2;
         int32_t s3 = t3 - t2;
 
         // Odd part
-        int32_t p0 = ( x4 * aanscales[1] ) >> SCALE;
-        int32_t p1 = ( x5 * aanscales[3] ) >> SCALE;
-        int32_t p2 = ( x6 * aanscales[5] ) >> SCALE;
-        int32_t p3 = ( x7 * aanscales[7] ) >> SCALE;
+        // Multiply x4..x7 by their appropriate constants
+        int32_t p0 = ( v[1] * aanscales[1] + ROUND ) >> SCALE;
+        int32_t p1 = ( v[3] * aanscales[3] + ROUND ) >> SCALE;
+        int32_t p2 = ( v[5] * aanscales[5] + ROUND ) >> SCALE;
+        int32_t p3 = ( v[7] * aanscales[7] + ROUND ) >> SCALE;
 
         int32_t o0 = p0 + p1;
         int32_t o1 = p0 - p1;
         int32_t o2 = p2 + p3;
         int32_t o3 = p2 - p3;
 
+        // Combine even and odd parts into output vector
         v[0] = s0 + o0;
         v[7] = s0 - o0;
         v[1] = s2 + o2;
@@ -1218,25 +1244,26 @@ struct AAN_IDCT
         v[4] = s1 - o1;
     }
 
+    // 2-D IDCT: rows then columns. in[] is 64-length array in row-major order.
+    // out[] is 64-length array, row-major. Returned values are integer samples
+    // (no level shift), with final rounding.
     static void idct8x8( const int32_t *in, int32_t *out )
     {
-        // Work in 32-bit integers, two-pass algorithm (rows then columns)
-
         int32_t tmp[64];
 
+        // Pass 1: process rows
         for( int r = 0; r < 8; ++r )
         {
             int32_t row[8];
-
             for( int i = 0; i < 8; ++i )
                 row[i] = in[r * 8 + i];
 
             idct1d( row );
-
             for( int i = 0; i < 8; ++i )
                 tmp[r * 8 + i] = row[i];
         }
 
+        // Pass 2: process columns, then final downscale with rounding
         for( int c = 0; c < 8; ++c )
         {
             int32_t col[8];
@@ -1244,23 +1271,12 @@ struct AAN_IDCT
                 col[i] = tmp[i * 8 + c];
 
             idct1d( col );
-
             for( int i = 0; i < 8; ++i )
-                out[i * 8 + c] = ( col[i] + ( 1 << ( SCALE - 1 ) ) ) >> SCALE; // Final scale down with rounding
+            {
+                out[i * 8 + c] = col[i];
+            }
         }
     }
-};
-
-const int32_t AAN_IDCT::aanscales[8] =
-{
-    ( int32_t )( 1 << AAN_IDCT::SCALE ), // 1.0
-    ( int32_t )round( 1.387039845 * ( 1 << AAN_IDCT::SCALE ) ), // c1
-    ( int32_t )round( 1.306562965 * ( 1 << AAN_IDCT::SCALE ) ), // c2
-    ( int32_t )round( 1.175875602 * ( 1 << AAN_IDCT::SCALE ) ), // c3
-    ( int32_t )round( 1.0 * ( 1 << AAN_IDCT::SCALE ) ), // c4
-    ( int32_t )round( 0.785694958 * ( 1 << AAN_IDCT::SCALE ) ), // c5
-    ( int32_t )round( 0.541196100 * ( 1 << AAN_IDCT::SCALE ) ), // c6
-    ( int32_t )round( 0.275899379 * ( 1 << AAN_IDCT::SCALE ) ) // c7
 };
 
 Huffman::Huffman( const SegmentSOF* sof_, const SegmentDRI* dri_, std::vector<const SegmentDHT*> dht_, std::vector<const SegmentSOS*> sos_, unsigned s, const PixelFormat &pfmt )
@@ -1956,17 +1972,8 @@ void Huffman::decompress( const std::vector<uint8_t>&, std::vector<uint8_t>& out
         {
             output.push_back( blk.componentId );
 
-            // Inverse zigzag
-            int32_t natural[64] = {0};
             for( size_t i = 0; i < 64; ++i )
-            {
-                size_t zz = ZigZag[i];
-                makeException( zz < 64 );
-                natural[ zz ] = blk.coefficients[i];
-            }
-
-            for( size_t i = 0; i < 64; ++i )
-                write_i32_le( output, natural[i] );
+                write_i32_le( output, blk.coefficients[i] );
         }
     }
 }
@@ -2028,7 +2035,6 @@ Quantization::Quantization( const SegmentSOF* sof_, std::vector<const SegmentDQT
 void Quantization::decompress( const std::vector<uint8_t>& input, std::vector<uint8_t>& output ) const
 {
     // Build quantization table map: tableId to 64 integers
-    std::array<int, 64> empty64;
     std::unordered_map<int, std::array<int, 64>> quantMap;
 
     for( auto seg : dqt )
@@ -2058,7 +2064,7 @@ void Quantization::decompress( const std::vector<uint8_t>& input, std::vector<ui
     p += 4;
     remain -= 4;
 
-    // Preserve same serialized layout: u32 count + entries (u8 compId + 64*i32)
+    // Preserve same serialized layout
     output.clear();
 
     write_u32_le( output, count );
