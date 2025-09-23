@@ -498,7 +498,7 @@ struct DCT : public Compression
     DCT( const SegmentSOF* sof_, unsigned s, const PixelFormat &pfmt );
 
     // AAN integer IDCT
-    // Input: dequantized coefficients { uint32_t count, { uint8_t compId, int32_t[64] }[count] blocks }
+    // Input: dequantized coefficients
     // Output: spatial samples (before level shift) { uint32_t count, { uint8_t compId, int32_t[64] }[count] blocks }
     void decompress( const std::vector<uint8_t>& input, std::vector<uint8_t>& output ) const;
 
@@ -516,6 +516,12 @@ struct BlockGrouping : public Compression
 
     // Input: DCT output
     // Output: uint16_t widthBlocks, uint16_t heightBlocks, uint8_t count, { uint8_t compId, uint8_t samplingFactors, uint8_t quantTableId, uint32_t numBlocks, {iint16_t[64]} blocks[numBlocks] }
+
+    // Output format:
+    // u16 widthBlocks (mcusX * maxH), u16 heightBlocks (mcusY * maxV), u8 components
+    // for each component (in SOF order):
+    //   u8 compId, u8 samplingFactors, u8 quantTableId, u32 numBlocks,
+    //   numBlocks * 64 * i16 LE  (blocks in component raster order)
     void decompress( const std::vector<uint8_t>& input, std::vector<uint8_t>& output ) const;
 
     void compress( Format &fmt, const Reference &source, Reference &destination ) override;
