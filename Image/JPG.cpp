@@ -1851,6 +1851,9 @@ void Huffman::decompress( const std::vector<uint8_t>&, std::vector<uint8_t>& out
         }
     };
 
+    // Keyed by SOF componentId
+    std::unordered_map<uint8_t, int32_t> lastDC;
+
     auto addDC = [&]( Reader & r, Block & blk, auto & component )
     {
         const HuffmanTable* dcTbl = dcTable( component );
@@ -1869,8 +1872,20 @@ void Huffman::decompress( const std::vector<uint8_t>&, std::vector<uint8_t>& out
             int64_t amplitude = 0;
             getAmplitude( r, symbol, amplitude );
 
-            blk.coefficients[0] = amplitude;
+            // Amplitude is the difference from previous DC (per component)
+            // Add to the predictor and store result as the actual DC coefficient:
+            int32_t prev = lastDC[ blk.componentId ]; // Initializes to 0 if absent by default
+            int64_t sum = int64_t( prev ) + amplitude;
+
+            if( sum > INT32_MAX ) sum = INT32_MAX;
+            if( sum < INT32_MIN ) sum = INT32_MIN;
+            int32_t dc = ( int32_t ) sum;
+
+            blk.coefficients[0] = dc;
             blk.written = true;
+
+            // Update predictor
+            lastDC[ blk.componentId ] = dc;
         }
         else
         {
@@ -1914,6 +1929,9 @@ void Huffman::decompress( const std::vector<uint8_t>&, std::vector<uint8_t>& out
 
         for( auto& slice : segment->entropy )
         {
+            lastDC.clear();
+            EOBRUN = 0;
+
             Reader reader( slice.data.data(), slice.data.size(), 0 );
 
             for( auto& mcu : acc.mcus )
