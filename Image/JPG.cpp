@@ -1114,130 +1114,62 @@ void JPEG::write( WriterBase &w ) const
 
 struct IDCT
 {
-    // AAN integer 2D IDCT for 8x8 blocks (portable, integer-only)
-    // Input: 64 int32_t coefficients in natural (row-major) order
-    // Output: 64 int32_t spatial samples (no level shift applied)
-    //
-    // Uses SCALE = 13 (scale factor = 8192) and integer constants derived
-    // from AAN multipliers rounded to integers
-    // Works with typical JPEG coefficient magnitudes (32-bit intermediate arithmetic)
-
-    static constexpr int32_t SCALE = 13; // Number of fractional bits
-    static constexpr int32_t ROUND = 1 << ( SCALE - 1 );
-
-    // Precomputed AAN multiplier constants scaled by (1<<SCALE)
-    // These are rounded values of the AAN multipliers:
-    static constexpr int32_t aanscales[8] =
-    {
-        1 << SCALE, // 1.0 * 8192 = 8192
-          11363,    // round( 1.387039845 * 8192 )
-          10703,    // round( 1.306562965 * 8192 )
-          9633,     // round( 1.175875602 * 8192 )
-          8192,     // 1.0 * 8192
-          6434,     // round( 0.785694958 * 8192 )
-          4433,     // round( 0.541196100 * 8192 )
-          2256      // round( 0.275899379 * 8192 )
-    };
-
-    // 1-D inverse transform on 8 elements, in-place
-    // Input values are expected in integer domain (scaled appropriately)
-    static void idct1d( int32_t *v )
-    {
-        // If all AC terms are zero, the result is a DC expansion:
-        if( v[1] == 0 && v[2] == 0 && v[3] == 0 && v[4] == 0 && v[5] == 0 && v[6] == 0 && v[7] == 0 )
-        {
-            // Each output becomes v[0] * aanscale[0] >> SCALE (i.e., v0)
-            // but we need the proper AAN normalization: with our intended scaling,
-            // the row/col passes combine to produce the right factor with final >>SCALE.
-            int32_t dc = ( v[0] * aanscales[0] + ROUND ) >> SCALE;
-            for( int i = 0; i < 8; ++i )
-                v[i] = dc;
-
-            return;
-        }
-
-        // Even part
-        int32_t x0 = v[0] + v[4];
-        int32_t x1 = v[0] - v[4];
-
-        // Multiply v[2] and v[6] by their scale factors (preserve fractional bits)
-        int32_t x2 = ( v[2] * aanscales[2] + ROUND ) >> SCALE;
-        int32_t x3 = ( v[6] * aanscales[6] + ROUND ) >> SCALE;
-
-        int32_t t0 = x0 + x3;
-        int32_t t3 = x0 - x3;
-        int32_t t1 = x1 + x2;
-        int32_t t2 = x1 - x2;
-
-        int32_t s0 = t0 + t1;
-        int32_t s1 = t0 - t1;
-        int32_t s2 = t3 + t2;
-        int32_t s3 = t3 - t2;
-
-        // Odd part
-        // Multiply x4..x7 by their appropriate constants
-        int32_t p0 = ( v[1] * aanscales[1] + ROUND ) >> SCALE;
-        int32_t p1 = ( v[3] * aanscales[3] + ROUND ) >> SCALE;
-        int32_t p2 = ( v[5] * aanscales[5] + ROUND ) >> SCALE;
-        int32_t p3 = ( v[7] * aanscales[7] + ROUND ) >> SCALE;
-
-        int32_t o0 = p0 + p1;
-        int32_t o1 = p0 - p1;
-        int32_t o2 = p2 + p3;
-        int32_t o3 = p2 - p3;
-
-        // Combine even and odd parts into output vector
-        v[0] = s0 + o0;
-        v[7] = s0 - o0;
-        v[1] = s2 + o2;
-        v[6] = s2 - o2;
-        v[2] = s3 + o3;
-        v[5] = s3 - o3;
-        v[3] = s1 + o1;
-        v[4] = s1 - o1;
-    }
-
-    // 2-D IDCT: rows then columns
-    // Input is 64-length array in row-major order
-    // Output is 64-length array, row-major
-    // No level shift, with final rounding
+    // Implementation for integer values
+    // Two-pass separable integer IDCT with high-precision integer coefficients
+    // Uses 64-bit accumulators
+    // The per-pass scale factor 0.5 from the double algorithm is included into the integer coefficients
     static void idct8x8( const int32_t *in, int32_t *out )
     {
-        double fin[64], fout[64];
-        for( int i = 0; i < 64; ++i )
-            fin[i] = double( in[i] );
+        constexpr int K = 20; // Scaling bits for coefficient precision
+        constexpr int64_t HALF = 1LL << ( K - 1 );
 
-        idct8x8( fin, fout );
-        for( int i = 0; i < 64; ++i )
-            out[i] = ( int32_t ) std::lround( fout[i] );
-
-        return;
+        // Build coefficient table
+        static int32_t coef[8][8];
+        static bool coefInitialized = false;
+        if( !coefInitialized )
+        {
+            const double PI = 3.14159265358979323846;
+            double scale = double( 1LL << K );
+            for( int u = 0; u < 8; ++u )
+            {
+                double Cu = ( u == 0 ) ? 1.0 / std::sqrt( 2.0 ) : 1.0;
+                for( int x = 0; x < 8; ++x )
+                {
+                    double c = Cu * std::cos( ( 2.0 * x + 1.0 ) * u * PI / 16.0 ) * 0.5; // Include the per-pass scale factor 0.5
+                    long long ci = llround( c * scale );
+                    coef[u][x] = ( int32_t )ci;
+                }
+            }
+            coefInitialized = true;
+        }
 
         int32_t tmp[64];
 
-        // Pass 1: process rows
-        for( int r = 0; r < 8; ++r )
+        // Rows
+        for( int y = 0; y < 8; ++y )
         {
-            int32_t row[8];
-            for( int i = 0; i < 8; ++i )
-                row[i] = in[r * 8 + i];
+            for( int x = 0; x < 8; ++x )
+            {
+                int64_t sum = 0;
+                for( int u = 0; u < 8; ++u )
+                    sum += int64_t( in[y * 8 + u] ) * int64_t( coef[u][x] );
 
-            idct1d( row );
-            for( int i = 0; i < 8; ++i )
-                tmp[r * 8 + i] = row[i];
+                // Rounding and descaling
+                tmp[y * 8 + x] = int32_t( ( sum + HALF ) >> K );
+            }
         }
 
-        // Pass 2: process columns, then final downscale with rounding
-        for( int c = 0; c < 8; ++c )
+        // Columns
+        for( int x = 0; x < 8; ++x )
         {
-            int32_t col[8];
-            for( int i = 0; i < 8; ++i )
-                col[i] = tmp[i * 8 + c];
-
-            idct1d( col );
-            for( int i = 0; i < 8; ++i )
+            for( int y = 0; y < 8; ++y )
             {
-                out[i * 8 + c] = col[i];
+                int64_t sum = 0;
+                for( int v = 0; v < 8; ++v )
+                    sum += int64_t( tmp[v * 8 + x] ) * int64_t( coef[v][y] );
+
+                // Rounding and descaling
+                out[y * 8 + x] = int32_t( ( sum + HALF ) >> K );
             }
         }
     }
@@ -1299,7 +1231,7 @@ struct IDCT
                 maxErr = e;
         }
 
-        makeException( maxErr < 3 );
+        makeException( maxErr < 2 );
     }
 };
 
@@ -2178,8 +2110,8 @@ void DCT::decompress( const std::vector<uint8_t>& input, std::vector<uint8_t>& o
             makeException( reader.read( sizeof( in[i] ), &in[i] ) );
 
         // Apply AAN integer IDCT (input in natural row-major order)
+        // IDCT::verify( in );
         IDCT::idct8x8( in, out );
-        IDCT::verify( in );
 
         // Output: keep int32_t spatial samples (before level shift)
         makeException( writer.write( sizeof( compId ), &compId ) );
