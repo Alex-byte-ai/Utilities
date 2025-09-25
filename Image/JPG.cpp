@@ -2608,23 +2608,13 @@ void YCbCrK::decompress( const std::vector<uint8_t>& input, std::vector<uint8_t>
     };
 
     // Conversion:
-    // If 1 component, grayscale
     // If 3 components, Y, Cb, Cr. Typical component IDs: Y = 1, Cb = 2, Cr = 3. Map by id position
     // If 4 components, Y, Cb, Cr, K. Convert YCbCr to RGB then multiply by 1 - K
 
     size_t pixelCount = size_t( width ) * size_t( height );
 
-    output.resize( 2 + 2 + 1 + 1 + pixelCount * 3, 0 );
+    output.resize( pixelCount * 3, 0 );
     Writer writer( output.data(), output.size(), 0 );
-
-    // Write header: width, height, channels, bitDepth
-
-    makeException( writer.write( sizeof( width ), &width ) );
-    makeException( writer.write( sizeof( height ), &height ) );
-
-    uint8_t channels = 3, bitDepth = 8;
-    makeException( writer.write( sizeof( channels ), &channels ) );
-    makeException( writer.write( sizeof( bitDepth ), &bitDepth ) );
 
     auto clamp8 = []( int v ) -> uint8_t
     {
@@ -2636,20 +2626,6 @@ void YCbCrK::decompress( const std::vector<uint8_t>& input, std::vector<uint8_t>
 
         return ( uint8_t )v;
     };
-
-    if( componentCount == 1 )
-    {
-        // Grayscale
-        auto &s = components[0].samples;
-        for( size_t i = 0; i < pixelCount; ++i )
-        {
-            auto v = clamp8( int( s[i] ) + 128 ); // Level shift
-            makeException( writer.write( sizeof( v ), &v ) );
-            makeException( writer.write( sizeof( v ), &v ) );
-            makeException( writer.write( sizeof( v ), &v ) );
-        }
-        return;
-    }
 
     if( 3 <= componentCount && componentCount <= 4 )
     {
@@ -2801,17 +2777,8 @@ void CMYK::decompress( const std::vector<uint8_t>& input, std::vector<uint8_t>& 
 
     size_t pixelCount = size_t( width ) * size_t( height );
 
-    output.resize( 2 + 2 + 1 + 1 + pixelCount * 3, 0 );
+    output.resize( pixelCount * 3, 0 );
     Writer writer( output.data(), output.size(), 0 );
-
-    // Write header: width, height, channels, bitDepth
-
-    makeException( writer.write( sizeof( width ), &width ) );
-    makeException( writer.write( sizeof( height ), &height ) );
-
-    uint8_t channels = 3, bitDepth = 8;
-    makeException( writer.write( sizeof( channels ), &channels ) );
-    makeException( writer.write( sizeof( bitDepth ), &bitDepth ) );
 
     auto &C = components[*cIdx].samples;
     auto &M = components[*mIdx].samples;
@@ -2934,20 +2901,6 @@ static void extractJpg( Format &fmt, ReaderBase &r )
     fmt.clear();
     fmt.pad = 1;
     fmt.offset = 0;
-    fmt.channels.reserve( size );
-
-    // SegmentICC contains data needed for color management
-
-    auto sof0 = image.findSingle<SegmentSOF0>();
-    auto dri = image.findSingle<SegmentDRI>();
-    auto dht = image.find<SegmentDHT>();
-    auto dac = image.find<SegmentDAC>();
-    auto dqt = image.find<SegmentDQT>();
-    auto sos = image.find<SegmentSOS>();
-
-    makeException( sof0 && !dht.empty() && !dqt.empty() && !sos.empty() );
-
-    fmt.clear();
     fmt.channels.push_back( { 'R', bits } );
     fmt.channels.push_back( { 'G', bits } );
     fmt.channels.push_back( { 'B', bits } );
@@ -2992,6 +2945,17 @@ static void extractJpg( Format &fmt, ReaderBase &r )
         makeException( false );
     }
 
+    // SegmentICC contains data needed for color management
+
+    auto sof0 = image.findSingle<SegmentSOF0>();
+    auto dri = image.findSingle<SegmentDRI>();
+    auto dht = image.find<SegmentDHT>();
+    auto dac = image.find<SegmentDAC>();
+    auto dqt = image.find<SegmentDQT>();
+    auto sos = image.find<SegmentSOS>();
+
+    makeException( sof0 && !dri && !dht.empty() && !dqt.empty() && !sos.empty() );
+
     std::vector<uint8_t> input, output;
 
     Huffman h( img, fmt.bufferSize(), fmt );
@@ -3016,16 +2980,6 @@ static void extractJpg( Format &fmt, ReaderBase &r )
 
     YCbCrK cc( img, fmt.bufferSize(), fmt );
     cc.decompress( input, output );
-
-    uint16_t width = 0, height = 0;
-
-    copy( &width, output.data(), 2 );
-    copy( &height, output.data() + 2, 2 );
-
-    uint8_t channels = output[4];
-    uint8_t bitDepth = output[5];
-
-    makeException( channels == 3 && bitDepth == 8 );
 
     FILE* out = fopen( "output/out.bmp", "wb" );
     makeException( out );
@@ -3113,12 +3067,15 @@ static void extractJpg( Format &fmt, ReaderBase &r )
     v4.bV4CSType = 0x73524742;
     fwrite( &v4, 1, sizeof( v4 ), out );
 
+    fmt.w = sof->header.imageWidth;
+    fmt.h = sof->header.imageHeight;
+
     uint8_t alpha = 255;
-    uint32_t area = width * height;
-    for( uint32_t i = 0; i < area; ++i )
+    int area = fmt.w * fmt.h;
+    for( int i = 0; i < area; ++i )
     {
-        fwrite( output.data() + 6 + i * 3, 1, 3, out );
-        fwrite( &alpha, 1, sizeof( alpha ), out );
+        fwrite( output.data() + i * 3, 1, 3, out );
+        fwrite( &alpha, sizeof( alpha ), 1, out );
     }
 
     fclose( out );
