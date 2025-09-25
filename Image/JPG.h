@@ -447,12 +447,11 @@ struct Huffman : public Compression
 
     Huffman( std::shared_ptr<JPEG> image, unsigned s, const PixelFormat &pfmt );
 
+    void compress( Format &fmt, const Reference &source, Reference &destination ) override;
+
     // Decompress a Huffman-coded scan
     // Input: entropy data extracted from the SOS segments
     // Output: serialized current coefficient arrays { uint32_t count, {uint8_t compId, int32_t coeffs[64]} blocks[count] }
-    void decompress( const std::vector<uint8_t>& input, std::vector<uint8_t>& output ) const;
-
-    void compress( Format &fmt, const Reference &source, Reference &destination ) override;
     void decompress( Format &fmt, const Reference &source, Reference &destination ) const override;
 
     bool equals( const Compression &other ) const override;
@@ -469,8 +468,6 @@ struct Arithmetic : public Compression
 
     Arithmetic( std::shared_ptr<JPEG> image, unsigned s, const PixelFormat &pfmt );
 
-    void decompress( const std::vector<uint8_t>& input, std::vector<uint8_t>& output ) const;
-
     void compress( Format &fmt, const Reference &source, Reference &destination ) override;
     void decompress( Format &fmt, const Reference &source, Reference &destination ) const override;
 
@@ -486,11 +483,10 @@ struct Quantization : public Compression
 
     Quantization( std::shared_ptr<JPEG> image, unsigned s, const PixelFormat &pfmt );
 
+    void compress( Format &fmt, const Reference &source, Reference &destination ) override;
+
     // Input: output of Huffman::decompress
     // Output: same layout, but each coefficient replaced by dequantized value
-    void decompress( const std::vector<uint8_t>& input, std::vector<uint8_t>& output ) const;
-
-    void compress( Format &fmt, const Reference &source, Reference &destination ) override;
     void decompress( Format &fmt, const Reference &source, Reference &destination ) const override;
 
     bool equals( const Compression &other ) const override;
@@ -504,12 +500,11 @@ struct DCT : public Compression
 
     DCT( std::shared_ptr<JPEG> image, unsigned s, const PixelFormat &pfmt );
 
+    void compress( Format &fmt, const Reference &source, Reference &destination ) override;
+
     // IDCT
     // Input: dequantized coefficients
     // Output: spatial samples (before level shift) { uint32_t count, { uint8_t compId, int32_t[64] } blocks[count] }
-    void decompress( const std::vector<uint8_t>& input, std::vector<uint8_t>& output ) const;
-
-    void compress( Format &fmt, const Reference &source, Reference &destination ) override;
     void decompress( Format &fmt, const Reference &source, Reference &destination ) const override;
 
     bool equals( const Compression &other ) const override;
@@ -523,11 +518,10 @@ struct BlockGrouping : public Compression
 
     BlockGrouping( std::shared_ptr<JPEG> image, unsigned s, const PixelFormat &pfmt );
 
+    void compress( Format &fmt, const Reference &source, Reference &destination ) override;
+
     // Input: DCT output
     // Output: uint16_t widthBlocks, uint16_t heightBlocks, uint8_t count, { uint8_t compId, uint8_t samplingFactors, uint8_t quantTableId, uint32_t numBlocks, {int16_t[64]} blocks[numBlocks] }
-    void decompress( const std::vector<uint8_t>& input, std::vector<uint8_t>& output ) const;
-
-    void compress( Format &fmt, const Reference &source, Reference &destination ) override;
     void decompress( Format &fmt, const Reference &source, Reference &destination ) const override;
 
     bool equals( const Compression &other ) const override;
@@ -541,12 +535,11 @@ struct Scale : public Compression
 
     Scale( std::shared_ptr<JPEG> image, unsigned s, const PixelFormat &pfmt );
 
+    void compress( Format &fmt, const Reference &source, Reference &destination ) override;
+
     // Bilinear chroma up-sampling
     // Input: BlockGrouping output
     // Output: uint16_t width, uint16_t height, uint8_t componentCount, {uint8_t compId, uint8_t elemSize, int16_t values[width*height]} component[componentCount]
-    void decompress( const std::vector<uint8_t>& input, std::vector<uint8_t>& output ) const;
-
-    void compress( Format &fmt, const Reference &source, Reference &destination ) override;
     void decompress( Format &fmt, const Reference &source, Reference &destination ) const override;
 
     bool equals( const Compression &other ) const override;
@@ -558,12 +551,11 @@ struct YCbCrK : public Compression
 
     YCbCrK( std::shared_ptr<JPEG> image, unsigned s, const PixelFormat &pfmt );
 
+    void compress( Format &fmt, const Reference &source, Reference &destination ) override;
+
     // Color conversion
     // Input: Scale output
     // Output: uint16_t width, uint16_t height, uint8_t channels, uint8_t bitDepth, interleaved pixel data (RGB)
-    void decompress( const std::vector<uint8_t>& input, std::vector<uint8_t>& output ) const;
-
-    void compress( Format &fmt, const Reference &source, Reference &destination ) override;
     void decompress( Format &fmt, const Reference &source, Reference &destination ) const override;
 
     bool equals( const Compression &other ) const override;
@@ -575,11 +567,10 @@ struct CMYK : public Compression
 
     CMYK( std::shared_ptr<JPEG> image, unsigned s, const PixelFormat &pfmt );
 
+    void compress( Format &fmt, const Reference &source, Reference &destination ) override;
+
     // Color conversion
     // Same as YCbCrK
-    void decompress( const std::vector<uint8_t>& input, std::vector<uint8_t>& output ) const;
-
-    void compress( Format &fmt, const Reference &source, Reference &destination ) override;
     void decompress( Format &fmt, const Reference &source, Reference &destination ) const override;
 
     bool equals( const Compression &other ) const override;

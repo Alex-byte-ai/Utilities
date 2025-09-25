@@ -4,6 +4,21 @@
 
 namespace ImageConvert
 {
+void sync( unsigned bytes, const Format &dstFmt, Reference &destination )
+{
+    if( destination.w != dstFmt.w || destination.h != dstFmt.h || destination.bytes < bytes )
+    {
+        destination.w = dstFmt.w;
+        destination.h = dstFmt.h;
+        destination.bytes = bytes;
+        makeException( destination.reset( destination ) );
+    }
+    else
+    {
+        destination.bytes = bytes;
+    }
+}
+
 void sync( const Format &dstFmt, Reference &destination )
 {
     auto bytes = dstFmt.bufferSize();

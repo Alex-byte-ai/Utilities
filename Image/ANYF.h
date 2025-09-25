@@ -13,6 +13,7 @@ namespace ImageConvert
 {
 using HeaderWriter = std::function<void( const Format &, Reference & )>;
 
+void sync( unsigned bytes, const Format &dstFmt, Reference &destination );
 void sync( const Format &dstFmt, Reference &destination );
 
 struct Misc : public Compression

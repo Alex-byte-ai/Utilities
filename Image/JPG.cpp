@@ -5,8 +5,6 @@
 #include <array>
 #include <map>
 
-#include <fstream>
-
 #include "Image/PixelIO.h"
 
 #include "Matrix3D.h"
@@ -1246,7 +1244,13 @@ Huffman::Huffman( std::shared_ptr<JPEG> img, unsigned s, const PixelFormat &pfmt
     makeException( sof && !dht.empty() && !sos.empty() );
 }
 
-void Huffman::decompress( const std::vector<uint8_t>&, std::vector<uint8_t>& output ) const
+void Huffman::compress( Format &, const Reference &, Reference & )
+{
+    // Not implemented
+    makeException( false );
+}
+
+void Huffman::decompress( Format &fmt, const Reference &source, Reference &destination ) const
 {
     struct Block
     {
@@ -1271,6 +1275,8 @@ void Huffman::decompress( const std::vector<uint8_t>&, std::vector<uint8_t>& out
     {
         std::vector<MCU> mcus;
     };
+
+    makeException( fmt.compression.front().get() == this );
 
     const SegmentSOS* currentSegment = nullptr;
     int Ss = 0, Se = 0, Ah = 0, Al = 0;
@@ -1885,8 +1891,12 @@ void Huffman::decompress( const std::vector<uint8_t>&, std::vector<uint8_t>& out
     for( auto &mcu : acc.mcus )
         totalBlocks += mcu.blocks.size();
 
-    output.resize( 4 + totalBlocks * ( 1 + 64 * 4 ), 0 );
-    Writer writer( output.data(), output.size(), 0 );
+    fmt.offset = 0;
+    fmt.compression.pop_front();
+    fmt.copy( *this );
+    sync( 4 + totalBlocks * ( 1 + 64 * 4 ), fmt, destination );
+
+    Writer writer( destination.link, destination.bytes, fmt.offset );
 
     makeException( writer.write( sizeof( totalBlocks ), &totalBlocks ) );
 
@@ -1901,18 +1911,6 @@ void Huffman::decompress( const std::vector<uint8_t>&, std::vector<uint8_t>& out
                 makeException( writer.write( sizeof( blk.coefficients[i] ), &blk.coefficients[i] ) );
         }
     }
-}
-
-void Huffman::compress( Format &, const Reference &, Reference & )
-{
-    // Not implemented
-    makeException( false );
-}
-
-void Huffman::decompress( Format &fmt, const Reference &source, Reference &destination ) const
-{
-    // Implement:
-    makeException( false );
 }
 
 bool Huffman::equals( const Compression &other ) const
@@ -1931,12 +1929,6 @@ Arithmetic::Arithmetic( std::shared_ptr<JPEG> img, unsigned s, const PixelFormat
     sos( image->find<SegmentSOS>() )
 {
     makeException( sof && !dac.empty() && !sos.empty() );
-}
-
-void Arithmetic::decompress( const std::vector<uint8_t>&, std::vector<uint8_t>& ) const
-{
-    // Not implemented
-    makeException( false );
 }
 
 void Arithmetic::compress( Format &, const Reference &, Reference & )
@@ -1967,7 +1959,13 @@ Quantization::Quantization( std::shared_ptr<JPEG> img, unsigned s, const PixelFo
     makeException( sof && !dqt.empty() );
 }
 
-void Quantization::decompress( const std::vector<uint8_t>& input, std::vector<uint8_t>& output ) const
+void Quantization::compress( Format &, const Reference &, Reference & )
+{
+    // Not implemented
+    makeException( false );
+}
+
+void Quantization::decompress( Format &fmt, const Reference &source, Reference &destination ) const
 {
     // Build quantization table map
     // Key: tableId
@@ -1984,6 +1982,8 @@ void Quantization::decompress( const std::vector<uint8_t>& input, std::vector<ui
         21, 34, 37, 47, 50, 56, 59, 61,
         35, 36, 48, 49, 57, 58, 62, 63
     };
+
+    makeException( fmt.compression.front().get() == this );
 
     for( auto seg : dqt )
     {
@@ -2004,14 +2004,19 @@ void Quantization::decompress( const std::vector<uint8_t>& input, std::vector<ui
     }
 
     // Read input blocks
-    Reader reader( input.data(), input.size(), 0 );
+    Reader reader( source.link, source.bytes, fmt.offset );
 
     uint32_t count = 0;
     makeException( reader.read( sizeof( count ), &count ) );
 
     // Preserve same serialized layout
-    output.resize( 4 + count * ( 1 + 64 * 4 ) );
-    Writer writer( output.data(), output.size(), 0 );
+
+    fmt.offset = 0;
+    fmt.compression.pop_front();
+    fmt.copy( *this );
+    sync( 4 + count * ( 1 + 64 * 4 ), fmt, destination );
+
+    Writer writer( destination.link, destination.bytes, fmt.offset );
 
     makeException( writer.write( sizeof( count ), &count ) );
 
@@ -2061,18 +2066,6 @@ void Quantization::decompress( const std::vector<uint8_t>& input, std::vector<ui
     }
 }
 
-void Quantization::compress( Format &, const Reference &, Reference & )
-{
-    // Not implemented
-    makeException( false );
-}
-
-void Quantization::decompress( Format &fmt, const Reference &source, Reference &destination ) const
-{
-    // Implement:
-    makeException( false );
-}
-
 bool Quantization::equals( const Compression &other ) const
 {
     // Implement:
@@ -2088,15 +2081,27 @@ DCT::DCT( std::shared_ptr<JPEG> img, unsigned s, const PixelFormat &pfmt ) :
     makeException( sof );
 }
 
-void DCT::decompress( const std::vector<uint8_t>& input, std::vector<uint8_t>& output ) const
+void DCT::compress( Format &, const Reference &, Reference & )
 {
-    Reader reader( input.data(), input.size(), 0 );
+    // Not implemented
+    makeException( false );
+}
+
+void DCT::decompress( Format &fmt, const Reference &source, Reference &destination ) const
+{
+    makeException( fmt.compression.front().get() == this );
+
+    Reader reader( source.link, source.bytes, fmt.offset );
 
     uint32_t count = 0;
     makeException( reader.read( sizeof( count ), &count ) );
 
-    output.resize( 4 + count * ( 1 + 64 * 4 ), 0 );
-    Writer writer( output.data(), output.size(), 0 );
+    fmt.offset = 0;
+    fmt.compression.pop_front();
+    fmt.copy( *this );
+    sync( 4 + count * ( 1 + 64 * 4 ), fmt, destination );
+
+    Writer writer( destination.link, destination.bytes, fmt.offset );
 
     makeException( writer.write( sizeof( count ), &count ) );
 
@@ -2121,18 +2126,6 @@ void DCT::decompress( const std::vector<uint8_t>& input, std::vector<uint8_t>& o
     }
 }
 
-void DCT::compress( Format &, const Reference &, Reference & )
-{
-    // Not implemented
-    makeException( false );
-}
-
-void DCT::decompress( Format &fmt, const Reference &source, Reference &destination ) const
-{
-    // Implement:
-    makeException( false );
-}
-
 bool DCT::equals( const Compression &other ) const
 {
     // Implement:
@@ -2148,9 +2141,17 @@ BlockGrouping::BlockGrouping( std::shared_ptr<JPEG> img, unsigned s, const Pixel
     makeException( sof );
 }
 
-void BlockGrouping::decompress( const std::vector<uint8_t>& input, std::vector<uint8_t>& output ) const
+void BlockGrouping::compress( Format &, const Reference &, Reference & )
 {
-    Reader reader( input.data(), input.size(), 0 );
+    // Not implemented
+    makeException( false );
+}
+
+void BlockGrouping::decompress( Format &fmt, const Reference &source, Reference &destination ) const
+{
+    makeException( fmt.compression.front().get() == this );
+
+    Reader reader( source.link, source.bytes, fmt.offset );
 
     uint32_t count = 0;
     makeException( reader.read( sizeof( count ), &count ) );
@@ -2281,8 +2282,12 @@ void BlockGrouping::decompress( const std::vector<uint8_t>& input, std::vector<u
         size += 1 + 1 + 1 + 4 + 64 * 2 * numBlocks;
     }
 
-    output.resize( size, 0 );
-    Writer writer( output.data(), output.size(), 0 );
+    fmt.offset = 0;
+    fmt.compression.pop_front();
+    fmt.copy( *this );
+    sync( size, fmt, destination );
+
+    Writer writer( destination.link, destination.bytes, fmt.offset );
 
     uint16_t widthBlocks = uint16_t( mcusX * maxH );
     uint16_t heightBlocks = uint16_t( mcusY * maxV );
@@ -2313,18 +2318,6 @@ void BlockGrouping::decompress( const std::vector<uint8_t>& input, std::vector<u
     }
 }
 
-void BlockGrouping::compress( Format &, const Reference &, Reference & )
-{
-    // Not implemented
-    makeException( false );
-}
-
-void BlockGrouping::decompress( Format &fmt, const Reference &source, Reference &destination ) const
-{
-    // Implement:
-    makeException( false );
-}
-
 bool BlockGrouping::equals( const Compression &other ) const
 {
     // Implement:
@@ -2340,9 +2333,17 @@ Scale::Scale( std::shared_ptr<JPEG> img, unsigned s, const PixelFormat &pfmt ) :
     makeException( sof );
 }
 
-void Scale::decompress( const std::vector<uint8_t>& input, std::vector<uint8_t>& output ) const
+void Scale::compress( Format &, const Reference &, Reference & )
 {
-    Reader reader( input.data(), input.size(), 0 );
+    // Not implemented
+    makeException( false );
+}
+
+void Scale::decompress( Format &fmt, const Reference &source, Reference &destination ) const
+{
+    makeException( fmt.compression.front().get() == this );
+
+    Reader reader( source.link, source.bytes, fmt.offset );
 
     uint16_t widthBlocks = 0, heightBlocks = 0;
     makeException( reader.read( sizeof( widthBlocks ), &widthBlocks ) );
@@ -2463,8 +2464,13 @@ void Scale::decompress( const std::vector<uint8_t>& input, std::vector<uint8_t>&
     }
 
     // Upsample each component's plane from (srcW, srcH) to (imageW, imageH) using bilinear interpolation and output the result
-    output.resize( 2 + 2 + 1 + planes.size() * ( 1 + 1 + 2 * imageW * imageH ), 0 );
-    Writer writer( output.data(), output.size(), 0 );
+
+    fmt.offset = 0;
+    fmt.compression.pop_front();
+    fmt.copy( *this );
+    sync( 2 + 2 + 1 + planes.size() * ( 1 + 1 + 2 * imageW * imageH ), fmt, destination );
+
+    Writer writer( destination.link, destination.bytes, fmt.offset );
 
     makeException( writer.write( sizeof( imageW ), &imageW ) );
     makeException( writer.write( sizeof( imageH ), &imageH ) );
@@ -2532,18 +2538,6 @@ void Scale::decompress( const std::vector<uint8_t>& input, std::vector<uint8_t>&
     }
 }
 
-void Scale::compress( Format &, const Reference &, Reference & )
-{
-    // Not implemented
-    makeException( false );
-}
-
-void Scale::decompress( Format &fmt, const Reference &source, Reference &destination ) const
-{
-    // Implement:
-    makeException( false );
-}
-
 bool Scale::equals( const Compression &other ) const
 {
     // Implement:
@@ -2556,11 +2550,17 @@ YCbCrK::YCbCrK( std::shared_ptr<JPEG> img, unsigned s, const PixelFormat &pfmt )
     image( std::move( img ) )
 {}
 
-// Input: Scale output (width,height,components, for each: compId, elemSize(2), width*height i16 samples)
-// Output: width,height, channels(3), bitDepth(8), interleaved RGB8
-void YCbCrK::decompress( const std::vector<uint8_t>& input, std::vector<uint8_t>& output ) const
+void YCbCrK::compress( Format &, const Reference &, Reference & )
 {
-    Reader reader( input.data(), input.size(), 0 );
+    // Not implemented
+    makeException( false );
+}
+
+void YCbCrK::decompress( Format &fmt, const Reference &source, Reference &destination ) const
+{
+    makeException( fmt.compression.front().get() == this );
+
+    Reader reader( source.link, source.bytes, fmt.offset );
 
     uint16_t width = 0, height = 0;
     makeException( reader.read( sizeof( width ), &width ) );
@@ -2613,8 +2613,12 @@ void YCbCrK::decompress( const std::vector<uint8_t>& input, std::vector<uint8_t>
 
     size_t pixelCount = size_t( width ) * size_t( height );
 
-    output.resize( pixelCount * 3, 0 );
-    Writer writer( output.data(), output.size(), 0 );
+    fmt.offset = 0;
+    fmt.compression.pop_front();
+    fmt.copy( *this );
+    sync( pixelCount * 3, fmt, destination );
+
+    Writer writer( destination.link, destination.bytes, fmt.offset );
 
     auto clamp8 = []( int v ) -> uint8_t
     {
@@ -2688,18 +2692,6 @@ void YCbCrK::decompress( const std::vector<uint8_t>& input, std::vector<uint8_t>
     makeException( false );
 }
 
-void YCbCrK::compress( Format &, const Reference &, Reference & )
-{
-    // Not implemented
-    makeException( false );
-}
-
-void YCbCrK::decompress( Format &fmt, const Reference &source, Reference &destination ) const
-{
-    // Implement:
-    makeException( false );
-}
-
 bool YCbCrK::equals( const Compression &other ) const
 {
     // Implement:
@@ -2712,10 +2704,17 @@ CMYK::CMYK( std::shared_ptr<JPEG> img, unsigned s, const PixelFormat &pfmt ) :
     image( std::move( img ) )
 {}
 
-// Input: Scale output (components), expects 4 components C, M, Y, K. Output same layout as YCbCrK: RGB interleaved 8-bit
-void CMYK::decompress( const std::vector<uint8_t>& input, std::vector<uint8_t>& output ) const
+void CMYK::compress( Format &, const Reference &, Reference & )
 {
-    Reader reader( input.data(), input.size(), 0 );
+    // Not implemented
+    makeException( false );
+}
+
+void CMYK::decompress( Format &fmt, const Reference &source, Reference &destination ) const
+{
+    makeException( fmt.compression.front().get() == this );
+
+    Reader reader( source.link, source.bytes, fmt.offset );
 
     uint16_t width = 0, height = 0;
     makeException( reader.read( sizeof( width ), &width ) );
@@ -2777,8 +2776,12 @@ void CMYK::decompress( const std::vector<uint8_t>& input, std::vector<uint8_t>& 
 
     size_t pixelCount = size_t( width ) * size_t( height );
 
-    output.resize( pixelCount * 3, 0 );
-    Writer writer( output.data(), output.size(), 0 );
+    fmt.offset = 0;
+    fmt.compression.pop_front();
+    fmt.copy( *this );
+    sync( pixelCount * 3, fmt, destination );
+
+    Writer writer( destination.link, destination.bytes, fmt.offset );
 
     auto &C = components[*cIdx].samples;
     auto &M = components[*mIdx].samples;
@@ -2817,18 +2820,6 @@ void CMYK::decompress( const std::vector<uint8_t>& input, std::vector<uint8_t>& 
         v = clamp8( int( std::lround( b ) ) );
         makeException( writer.write( sizeof( v ), &v ) );
     }
-}
-
-void CMYK::compress( Format &, const Reference &, Reference & )
-{
-    // Not implemented
-    makeException( false );
-}
-
-void CMYK::decompress( Format &fmt, const Reference &source, Reference &destination ) const
-{
-    // Implement:
-    makeException( false );
 }
 
 bool CMYK::equals( const Compression &other ) const
@@ -2916,7 +2907,7 @@ static void extractJpg( Format &fmt, ReaderBase &r )
     case 1:
         break;
     case 2:
-        fmt.compression.push_front( std::make_shared<YCbCrK>( img, fmt.bufferSize(), fmt ) );
+        fmt.compression.push_front( std::make_shared<YCbCrK>( img, 0, fmt ) );
         fmt.clear();
         fmt.channels.push_back( { 'Y', bits } );
         fmt.channels.push_back( { 'B', bits } );
@@ -2924,7 +2915,7 @@ static void extractJpg( Format &fmt, ReaderBase &r )
         fmt.calculateBits();
         break;
     case 3:
-        fmt.compression.push_front( std::make_shared<CMYK>( img, fmt.bufferSize(), fmt ) );
+        fmt.compression.push_front( std::make_shared<CMYK>( img, 0, fmt ) );
         fmt.clear();
         fmt.channels.push_back( { 'C', bits } );
         fmt.channels.push_back( { 'M', bits } );
@@ -2933,7 +2924,7 @@ static void extractJpg( Format &fmt, ReaderBase &r )
         fmt.calculateBits();
         break;
     case 4:
-        fmt.compression.push_front( std::make_shared<YCbCrK>( img, fmt.bufferSize(), fmt ) );
+        fmt.compression.push_front( std::make_shared<YCbCrK>( img, 0, fmt ) );
         fmt.clear();
         fmt.channels.push_back( { 'Y', bits } );
         fmt.channels.push_back( { 'B', bits } );
@@ -2956,131 +2947,11 @@ static void extractJpg( Format &fmt, ReaderBase &r )
 
     makeException( sof0 && !dri && !dht.empty() && !dqt.empty() && !sos.empty() );
 
-    std::vector<uint8_t> input, output;
-
-    Huffman h( img, fmt.bufferSize(), fmt );
-    h.decompress( input, output );
-    input = std::move( output );
-
-    Quantization q( img, fmt.bufferSize(), fmt );
-    q.decompress( input, output );
-    input = std::move( output );
-
-    DCT dct( img, fmt.bufferSize(), fmt );
-    dct.decompress( input, output );
-    input = std::move( output );
-
-    BlockGrouping bg( img, fmt.bufferSize(), fmt );
-    bg.decompress( input, output );
-    input = std::move( output );
-
-    Scale sc( img, fmt.bufferSize(), fmt );
-    sc.decompress( input, output );
-    input = std::move( output );
-
-    YCbCrK cc( img, fmt.bufferSize(), fmt );
-    cc.decompress( input, output );
-
-    FILE* out = fopen( "output/out.bmp", "wb" );
-    makeException( out );
-
-#pragma pack(push, 1)
-
-    struct BITMAPFILEHEADER
-    {
-        uint16_t bfType;
-        uint32_t bfSize;
-        uint16_t bfReserved1;
-        uint16_t bfReserved2;
-        uint32_t bfOffBits;
-    };
-
-    struct BITMAPINFOHEADER
-    {
-        uint32_t biSize;
-        int32_t  biWidth;
-        int32_t  biHeight;
-        uint16_t biPlanes;
-        uint16_t biBitCount;
-        uint32_t biCompression;
-        uint32_t biSizeImage;
-        int32_t  biXPelsPerMeter;
-        int32_t  biYPelsPerMeter;
-        uint32_t biClrUsed;
-        uint32_t biClrImportant;
-    };
-
-    struct CIEXYZ
-    {
-        int32_t ciexyzX;
-        int32_t ciexyzY;
-        int32_t ciexyzZ;
-    };
-
-    struct CIEXYZTRIPLE
-    {
-        CIEXYZ ciexyzRed;
-        CIEXYZ ciexyzGreen;
-        CIEXYZ ciexyzBlue;
-    };
-
-    struct BITMAPV4HEADER
-    {
-        BITMAPINFOHEADER info;
-        uint32_t bV4RedMask;
-        uint32_t bV4GreenMask;
-        uint32_t bV4BlueMask;
-        uint32_t bV4AlphaMask;
-        uint32_t bV4CSType;
-        CIEXYZTRIPLE bV4Endpoints;
-        uint32_t bV4GammaRed;
-        uint32_t bV4GammaGreen;
-        uint32_t bV4GammaBlue;
-    };
-
-#pragma pack(pop)
-
-    BITMAPFILEHEADER fh;
-    BITMAPV4HEADER v4;
-
-    fh.bfType = 0x4D42;
-    fh.bfSize = sizeof( fh ) + sizeof( v4 ) + 4 * fmt.w * fmt.h;
-    fh.bfReserved1 = 0;
-    fh.bfReserved2 = 0;
-    fh.bfOffBits = sizeof( fh ) + sizeof( v4 );
-    fwrite( &fh, 1, sizeof( fh ), out );
-
-    clear( &v4, sizeof( v4 ) );
-    v4.info.biSize = sizeof( v4 );
-    v4.info.biWidth = fmt.w;
-    v4.info.biHeight = fmt.h;
-    v4.info.biPlanes = 1;
-    v4.info.biBitCount = 32;
-    v4.info.biCompression = 3;
-    v4.info.biSizeImage = 0;
-    v4.info.biClrUsed = 0;
-    v4.info.biClrImportant = 0;
-    v4.bV4RedMask   = 0x000000ff;
-    v4.bV4GreenMask = 0x0000ff00;
-    v4.bV4BlueMask  = 0x00ff0000;
-    v4.bV4AlphaMask = 0xff000000;
-    v4.bV4CSType = 0x73524742;
-    fwrite( &v4, 1, sizeof( v4 ), out );
-
-    fmt.w = sof->header.imageWidth;
-    fmt.h = sof->header.imageHeight;
-
-    uint8_t alpha = 255;
-    int area = fmt.w * fmt.h;
-    for( int i = 0; i < area; ++i )
-    {
-        fwrite( output.data() + i * 3, 1, 3, out );
-        fwrite( &alpha, sizeof( alpha ), 1, out );
-    }
-
-    fclose( out );
-
-    makeException( false );
+    fmt.compression.push_front( std::make_shared<Scale>( img, 0, fmt ) );
+    fmt.compression.push_front( std::make_shared<BlockGrouping>( img, 0, fmt ) );
+    fmt.compression.push_front( std::make_shared<DCT>( img, 0, fmt ) );
+    fmt.compression.push_front( std::make_shared<Quantization>( img, 0, fmt ) );
+    fmt.compression.push_front( std::make_shared<Huffman>( img, 0, fmt ) );
 }
 
 void makeJpg( const Reference &ref, Format &format, HeaderWriter *write )
