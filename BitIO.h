@@ -131,7 +131,7 @@ public:
 
         readBits( p.pointer, p.bitOffset, bits, value );
         return true;
-    };
+    }
 
     bool read( unsigned bytes, void *value ) override
     {
@@ -183,7 +183,7 @@ public:
 
         writeBits( p.pointer, p.bitOffset, bits, value );
         return true;
-    };
+    }
 
     bool write( unsigned bytes, const void *value ) override
     {
