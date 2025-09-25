@@ -9,14 +9,13 @@
 #include "BitIO.h"
 
 // https://en.wikipedia.org/wiki/JPEG
-// https://docs.fileformat.com/image/jpeg/
 // https://en.wikipedia.org/wiki/YCbCr
+// https://docs.fileformat.com/image/jpeg/
 
 namespace ImageConvert
 {
 // JPG pipeline:
-// (File) sectors <-> entropy decoding <-> run-length expansion <-> inverse zig-zag <-> de-quantization <
-// > (inverse discrete cosine transform >-< level shift) <-> block splitting <-> chroma up-sampling <-> color space conversion (Pixels)
+// (File) sectors <-> Huffman-code <-> quantization <-> DCT <-> scaling <-> color space conversion (Pixels)
 
 // JPEG segment container
 class JPEG
@@ -439,16 +438,18 @@ struct SegmentSOS : public JPEG::Segment
 
 struct Huffman : public Compression
 {
+    std::shared_ptr<JPEG> image;
+
     const SegmentSOF* sof;
     const SegmentDRI* dri;
     std::vector<const SegmentDHT*> dht;
     std::vector<const SegmentSOS*> sos;
 
-    Huffman( const SegmentSOF* sof, const SegmentDRI* dri, std::vector<const SegmentDHT*> dht, std::vector<const SegmentSOS*> sos, unsigned s, const PixelFormat &pfmt );
+    Huffman( std::shared_ptr<JPEG> image, unsigned s, const PixelFormat &pfmt );
 
     // Decompress a Huffman-coded scan
     // Input: entropy data extracted from the SOS segments
-    // Output: serialized current coefficient arrays { uint32_t count, {uint8_t compId, int32_t coeffs[64]}[count] blocks }
+    // Output: serialized current coefficient arrays { uint32_t count, {uint8_t compId, int32_t coeffs[64]} blocks[count] }
     void decompress( const std::vector<uint8_t>& input, std::vector<uint8_t>& output ) const;
 
     void compress( Format &fmt, const Reference &source, Reference &destination ) override;
@@ -459,12 +460,14 @@ struct Huffman : public Compression
 
 struct Arithmetic : public Compression
 {
+    std::shared_ptr<JPEG> image;
+
     const SegmentSOF* sof;
     const SegmentDRI* dri;
     std::vector<const SegmentDAC*> dac;
     std::vector<const SegmentSOS*> sos;
 
-    Arithmetic( const SegmentSOF* sof, const SegmentDRI* dri, std::vector<const SegmentDAC*> dac, std::vector<const SegmentSOS*> sos, unsigned s, const PixelFormat &pfmt );
+    Arithmetic( std::shared_ptr<JPEG> image, unsigned s, const PixelFormat &pfmt );
 
     void decompress( const std::vector<uint8_t>& input, std::vector<uint8_t>& output ) const;
 
@@ -476,13 +479,15 @@ struct Arithmetic : public Compression
 
 struct Quantization : public Compression
 {
+    std::shared_ptr<JPEG> image;
+
     const SegmentSOF* sof;
     std::vector<const SegmentDQT*> dqt;
 
+    Quantization( std::shared_ptr<JPEG> image, unsigned s, const PixelFormat &pfmt );
+
     // Input: output of Huffman::decompress
     // Output: same layout, but each coefficient replaced by dequantized value
-    Quantization( const SegmentSOF* sof, std::vector<const SegmentDQT*> dqt, unsigned s, const PixelFormat &pfmt );
-
     void decompress( const std::vector<uint8_t>& input, std::vector<uint8_t>& output ) const;
 
     void compress( Format &fmt, const Reference &source, Reference &destination ) override;
@@ -493,13 +498,15 @@ struct Quantization : public Compression
 
 struct DCT : public Compression
 {
+    std::shared_ptr<JPEG> image;
+
     const SegmentSOF* sof;
 
-    DCT( const SegmentSOF* sof_, unsigned s, const PixelFormat &pfmt );
+    DCT( std::shared_ptr<JPEG> image, unsigned s, const PixelFormat &pfmt );
 
-    // AAN integer IDCT
+    // IDCT
     // Input: dequantized coefficients
-    // Output: spatial samples (before level shift) { uint32_t count, { uint8_t compId, int32_t[64] }[count] blocks }
+    // Output: spatial samples (before level shift) { uint32_t count, { uint8_t compId, int32_t[64] } blocks[count] }
     void decompress( const std::vector<uint8_t>& input, std::vector<uint8_t>& output ) const;
 
     void compress( Format &fmt, const Reference &source, Reference &destination ) override;
@@ -510,18 +517,14 @@ struct DCT : public Compression
 
 struct BlockGrouping : public Compression
 {
+    std::shared_ptr<JPEG> image;
+
     const SegmentSOF* sof;
 
-    BlockGrouping( const SegmentSOF* sof_, unsigned s, const PixelFormat &pfmt );
+    BlockGrouping( std::shared_ptr<JPEG> image, unsigned s, const PixelFormat &pfmt );
 
     // Input: DCT output
-    // Output: uint16_t widthBlocks, uint16_t heightBlocks, uint8_t count, { uint8_t compId, uint8_t samplingFactors, uint8_t quantTableId, uint32_t numBlocks, {iint16_t[64]} blocks[numBlocks] }
-
-    // Output format:
-    // u16 widthBlocks (mcusX * maxH), u16 heightBlocks (mcusY * maxV), u8 components
-    // for each component (in SOF order):
-    //   u8 compId, u8 samplingFactors, u8 quantTableId, u32 numBlocks,
-    //   numBlocks * 64 * i16 LE  (blocks in component raster order)
+    // Output: uint16_t widthBlocks, uint16_t heightBlocks, uint8_t count, { uint8_t compId, uint8_t samplingFactors, uint8_t quantTableId, uint32_t numBlocks, {int16_t[64]} blocks[numBlocks] }
     void decompress( const std::vector<uint8_t>& input, std::vector<uint8_t>& output ) const;
 
     void compress( Format &fmt, const Reference &source, Reference &destination ) override;
@@ -532,13 +535,15 @@ struct BlockGrouping : public Compression
 
 struct Scale : public Compression
 {
+    std::shared_ptr<JPEG> image;
+
     const SegmentSOF* sof;
 
-    Scale( const SegmentSOF* sof_, unsigned s, const PixelFormat &pfmt );
+    Scale( std::shared_ptr<JPEG> image, unsigned s, const PixelFormat &pfmt );
 
     // Bilinear chroma up-sampling
     // Input: BlockGrouping output
-    // Output: header u16 width,u16 height,u8 components; for each component: u8 compId,u8 elemSize(2), then width*height i16 LE samples
+    // Output: uint16_t width, uint16_t height, uint8_t componentCount, {uint8_t compId, uint8_t elemSize, int16_t values[width*height]} component[componentCount]
     void decompress( const std::vector<uint8_t>& input, std::vector<uint8_t>& output ) const;
 
     void compress( Format &fmt, const Reference &source, Reference &destination ) override;
@@ -549,11 +554,13 @@ struct Scale : public Compression
 
 struct YCbCrK : public Compression
 {
-    YCbCrK( unsigned s, const PixelFormat &pfmt );
+    std::shared_ptr<JPEG> image;
+
+    YCbCrK( std::shared_ptr<JPEG> image, unsigned s, const PixelFormat &pfmt );
 
     // Color conversion
-    // Input: Scale output: u16 width, u16 height, u8 components; for each component: u8 compId, u8 elemSize (2) then width*height i16 LE
-    // Output: u16 width, u16 height, u8 channels, u8 bitDepth, then interleaved pixel data (RGB8)
+    // Input: Scale output
+    // Output: uint16_t width, uint16_t height, uint8_t channels, uint8_t bitDepth, interleaved pixel data (RGB)
     void decompress( const std::vector<uint8_t>& input, std::vector<uint8_t>& output ) const;
 
     void compress( Format &fmt, const Reference &source, Reference &destination ) override;
@@ -564,7 +571,9 @@ struct YCbCrK : public Compression
 
 struct CMYK : public Compression
 {
-    CMYK( unsigned s, const PixelFormat &pfmt );
+    std::shared_ptr<JPEG> image;
+
+    CMYK( std::shared_ptr<JPEG> image, unsigned s, const PixelFormat &pfmt );
 
     // Color conversion
     // Same as YCbCrK
