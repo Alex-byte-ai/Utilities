@@ -1,0 +1,5 @@
+#include "resource.h"
+
+IDI_APP_ICON ICON "console.ico"
+IDI_WINDOW_ICON ICON "console.ico"
+IDI_SMALL_WINDOW_ICON ICON "console.ico"

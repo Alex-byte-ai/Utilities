@@ -1,0 +1,3 @@
+﻿#define IDI_APP_ICON 101
+#define IDI_WINDOW_ICON 102
+#define IDI_SMALL_WINDOW_ICON 103
