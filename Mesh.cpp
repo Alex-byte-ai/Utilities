@@ -825,293 +825,283 @@ const Mesh::Groups &Mesh::getGroups() const
 
 bool Mesh::input( const std::filesystem::path &path, std::filesystem::path *materials )
 {
-    std::ifstream file( path, std::ios::binary );
-    Scanner s( file, path.generic_wstring() );
-    String e;
-
-    clear();
-
-    if( materials )
-        materials->clear();
-
-    Bitset *o = nullptr, *g = nullptr, *m = nullptr;
-
-    auto get = [&s]( Bitset *&bitset, std::optional<std::map<std::wstring, Bitset>> &map )
+    try
     {
-        if( !map )
-            return true;
-        std::wstring name;
-        if( !s.token.s.EncodeW( name ) )
-            return false;
-        bitset = &map->emplace( name, Bitset() ).first->second;
-        return true;
-    };
+        std::ifstream file( path, std::ios::binary );
+        Scanner s( file, path.generic_wstring() );
 
-    while( s.token.t != Scanner::Nil )
-    {
-        if( s.token.error( e ) )
-            return false;
+        clear();
 
-        if( s.token.error( e, Scanner::Name ) )
-            return false;
+        if( materials )
+            materials->clear();
 
-        if( s.token.s == "mtllib" )
+        Bitset *o = nullptr, *g = nullptr, *m = nullptr;
+
+        auto get = [&s]( Bitset *&bitset, std::optional<std::map<std::wstring, Bitset>> &map )
         {
-            s.getLine();
-
-            if( materials )
-            {
-                std::wstring string;
-                if( !s.token.s.EncodeW( string ) )
-                    return false;
-
-                std::filesystem::path secondary = string;
-                *materials = secondary.is_absolute() ? secondary : path.parent_path() / secondary;
-            }
-
-            s.getToken();
-
-            continue;
-        }
-
-        if( s.token.s == "o" )
-        {
-            s.getLine();
-            if( !get( o, groups.o ) )
-                return false;
-            s.getToken();
-
-            continue;
-        }
-
-        if( s.token.s == "g" )
-        {
-            s.getLine();
-            if( !get( g, groups.g ) )
-                return false;
-            s.getToken();
-
-            continue;
-        }
-
-        if( s.token.s == "usemtl" )
-        {
-            s.getToken();
-            if( !get( m, groups.m ) )
-                return false;
-            s.getToken();
-
-            continue;
-        }
-
-        if( s.token.s == "s" )
-        {
-            s.getToken();
-            // Smooth shading: on / off / 0 / 1
-            s.getToken();
-
-            continue;
-        }
-
-        auto getVector = [&]( Vector3D & v )
-        {
-            s.getToken();
-            v.x = s.token.x;
-            if( s.token.error( e, Scanner::Real ) )
-                return false;
-
-            s.getToken();
-            v.y = s.token.x;
-            if( s.token.error( e, Scanner::Real ) )
-                return false;
-
-            s.getToken();
-            if( s.token.t == Scanner::Real )
-            {
-                v.z = s.token.x;
-                s.getToken();
-            }
-            else
-            {
-                v.z = 0;
-            }
-
-            return true;
+            if( !map )
+                return;
+            bitset = &map->emplace( ( std::wstring )s.token.s, Bitset() ).first->second;
         };
 
-        if( s.token.s == "v" )
+        while( s.token.t != Scanner::Nil )
         {
-            Vector3D v;
-            if( !getVector( v ) )
-                return false;
-            points.push_back( v );
+            s.token.error( Scanner::Name );
 
-            continue;
-        }
-
-        if( s.token.s == "vt" )
-        {
-            Vector3D vt;
-            if( !getVector( vt ) )
-                return false;
-            uv.push_back( vt );
-
-            continue;
-        }
-
-        if( s.token.s == "vn" )
-        {
-            Vector3D vn;
-            if( !getVector( vn ) )
-                return false;
-            normals.push_back( vn );
-
-            continue;
-        }
-
-        if( s.token.s == "vp" )
-        {
-            Vector3D vp;
-            if( !getVector( vp ) )
-                return false;
-
-            continue;
-        }
-
-        if( s.token.s == "l" )
-        {
-            s.getToken();
-            // Polyline
-            while( s.token.t == Scanner::Int )
+            if( s.token.s == "mtllib" )
             {
+                s.getLine();
+
+                if( materials )
+                {
+                    std::wstring string;
+                    if( !s.token.s.EncodeW( string ) )
+                        return false;
+
+                    std::filesystem::path secondary = string;
+                    *materials = secondary.is_absolute() ? secondary : path.parent_path() / secondary;
+                }
+
                 s.getToken();
+
+                continue;
             }
 
-            continue;
-        }
-
-        if( s.token.s == "f" )
-        {
-            std::vector<std::tuple<size_t, std::optional<size_t>, std::optional<size_t>>> vertices;
-
-            s.getToken();
-
-            while( s.token.t == Scanner::Int )
+            if( s.token.s == "o" )
             {
-                std::optional<size_t> normal, texture;
-                bool tex = false, norm = false;
-
-                size_t point = s.token.n - 1;
+                s.getLine();
+                get( o, groups.o );
                 s.getToken();
 
-                if( s.token.t == Scanner::Slash )
+                continue;
+            }
+
+            if( s.token.s == "g" )
+            {
+                s.getLine();
+                get( g, groups.g );
+                s.getToken();
+
+                continue;
+            }
+
+            if( s.token.s == "usemtl" )
+            {
+                s.getToken();
+                get( m, groups.m );
+                s.getToken();
+
+                continue;
+            }
+
+            if( s.token.s == "s" )
+            {
+                s.getToken();
+                // Smooth shading: on / off / 0 / 1
+                s.getToken();
+
+                continue;
+            }
+
+            auto getVector = [&]( Vector3D & v )
+            {
+                s.getToken();
+                v.x = s.token.x;
+                s.token.error( Scanner::Real );
+
+                s.getToken();
+                v.y = s.token.x;
+                s.token.error( Scanner::Real );
+
+                s.getToken();
+                if( s.token.t == Scanner::Real )
+                {
+                    v.z = s.token.x;
+                    s.getToken();
+                }
+                else
+                {
+                    v.z = 0;
+                }
+
+                return true;
+            };
+
+            if( s.token.s == "v" )
+            {
+                Vector3D v;
+                if( !getVector( v ) )
+                    return false;
+                points.push_back( v );
+
+                continue;
+            }
+
+            if( s.token.s == "vt" )
+            {
+                Vector3D vt;
+                if( !getVector( vt ) )
+                    return false;
+                uv.push_back( vt );
+
+                continue;
+            }
+
+            if( s.token.s == "vn" )
+            {
+                Vector3D vn;
+                if( !getVector( vn ) )
+                    return false;
+                normals.push_back( vn );
+
+                continue;
+            }
+
+            if( s.token.s == "vp" )
+            {
+                Vector3D vp;
+                if( !getVector( vp ) )
+                    return false;
+
+                continue;
+            }
+
+            if( s.token.s == "l" )
+            {
+                s.getToken();
+                // Polyline
+                while( s.token.t == Scanner::Int )
                 {
                     s.getToken();
+                }
 
-                    tex = s.token.t != Scanner::Slash;
-                    norm = !tex;
+                continue;
+            }
 
-                    if( tex )
+            if( s.token.s == "f" )
+            {
+                std::vector<std::tuple<size_t, std::optional<size_t>, std::optional<size_t>>> vertices;
+
+                s.getToken();
+
+                while( s.token.t == Scanner::Int )
+                {
+                    std::optional<size_t> normal, texture;
+                    bool tex = false, norm = false;
+
+                    size_t point = s.token.n - 1;
+                    s.getToken();
+
+                    if( s.token.t == Scanner::Slash )
                     {
-                        if( s.token.error( e, Scanner::Int ) )
-                            return false;
-
-                        texture = s.token.n - 1;
                         s.getToken();
 
-                        norm = s.token.t == Scanner::Slash;
-                        if( norm )
+                        tex = s.token.t != Scanner::Slash;
+                        norm = !tex;
+
+                        if( tex )
+                        {
+                            s.token.error( Scanner::Int );
+
+                            texture = s.token.n - 1;
+                            s.getToken();
+
+                            norm = s.token.t == Scanner::Slash;
+                            if( norm )
+                            {
+                                s.getToken();
+                            }
+                        }
+                        else
                         {
                             s.getToken();
                         }
-                    }
-                    else
-                    {
-                        s.getToken();
+
+                        if( norm )
+                        {
+                            s.token.error( Scanner::Int );
+
+                            normal = s.token.n - 1;
+                            s.getToken();
+                        }
                     }
 
-                    if( norm )
-                    {
-                        if( s.token.error( e, Scanner::Int ) )
-                            return false;
-
-                        normal = s.token.n - 1;
-                        s.getToken();
-                    }
+                    vertices.emplace_back( point, normal, texture );
                 }
 
-                vertices.emplace_back( point, normal, texture );
-            }
-
-            if( vertices.size() < 3 )
-                return false;
-
-            bool tex = true;
-
-            auto getTexture = [this, &tex]( const auto & vertex )
-            {
-                if( std::get<2>( vertex ).has_value() && *std::get<2>( vertex ) < uv.size() )
-                    return *std::get<2>( vertex );
-
-                if( tex )
-                {
-                    uv.push_back( Vector3D( 0, 0, 0 ) );
-                    tex = false;
-                }
-
-                return uv.size() - 1;
-            };
-
-            auto getNormal = [this]( const auto & vertex, size_t e0, size_t e1 )
-            {
-                if( std::get<1>( vertex ).has_value() && *std::get<1>( vertex ) < normals.size() )
-                    return *std::get<1>( vertex );
-
-                const auto &edge0 = edges[e0];
-                const auto &edge1 = edges[e1];
-
-                const auto &p0 = points[edge0.s];
-                const auto &p1 = points[edge0.f];
-                const auto &p2 = points[edge1.f];
-
-                auto n = normals.size();
-                normals.push_back( ( p1 - p0 ).M( p2 - p1 ).Normal() );
-                return n;
-            };
-
-            for( size_t i = 1; i < vertices.size() - 1; ++i )
-            {
-                const auto &v0 = vertices[0];
-                const auto &v1 = vertices[i];
-                const auto &v2 = vertices[( i + 1 ) % vertices.size()];
-                if( std::get<0>( v0 ) >= points.size() || std::get<0>( v1 ) >= points.size() || std::get<0>( v2 ) >= points.size() )
+                if( vertices.size() < 3 )
                     return false;
 
-                auto e0 = edges.size();
-                edges.push_back( Edge{ std::get<0>( v0 ), std::get<0>( v1 ) } );
+                bool tex = true;
 
-                auto e1 = edges.size();
-                edges.push_back( Edge{ std::get<0>( v1 ), std::get<0>( v2 ) } );
+                auto getTexture = [this, &tex]( const auto & vertex )
+                {
+                    if( std::get<2>( vertex ).has_value() && *std::get<2>( vertex ) < uv.size() )
+                        return *std::get<2>( vertex );
 
-                auto e2 = edges.size();
-                edges.push_back( Edge{ std::get<0>( v2 ), std::get<0>( v0 ) } );
+                    if( tex )
+                    {
+                        uv.push_back( Vector3D( 0, 0, 0 ) );
+                        tex = false;
+                    }
 
-                if( o )
-                    o->set( faces.size() );
-                if( g )
-                    g->set( faces.size() );
-                if( m )
-                    m->set( faces.size() );
-                faces.push_back( Face{ Triplet{ e0, e1, e2 },
-                                       Triplet{ getNormal( v0, e0, e1 ), getNormal( v1, e1, e2 ), getNormal( v2, e2, e0 ) },
-                                       Triplet{ getTexture( v0 ), getTexture( v1 ), getTexture( v2 ) } } );
+                    return uv.size() - 1;
+                };
+
+                auto getNormal = [this]( const auto & vertex, size_t e0, size_t e1 )
+                {
+                    if( std::get<1>( vertex ).has_value() && *std::get<1>( vertex ) < normals.size() )
+                        return *std::get<1>( vertex );
+
+                    const auto &edge0 = edges[e0];
+                    const auto &edge1 = edges[e1];
+
+                    const auto &p0 = points[edge0.s];
+                    const auto &p1 = points[edge0.f];
+                    const auto &p2 = points[edge1.f];
+
+                    auto n = normals.size();
+                    normals.push_back( ( p1 - p0 ).M( p2 - p1 ).Normal() );
+                    return n;
+                };
+
+                for( size_t i = 1; i < vertices.size() - 1; ++i )
+                {
+                    const auto &v0 = vertices[0];
+                    const auto &v1 = vertices[i];
+                    const auto &v2 = vertices[( i + 1 ) % vertices.size()];
+                    if( std::get<0>( v0 ) >= points.size() || std::get<0>( v1 ) >= points.size() || std::get<0>( v2 ) >= points.size() )
+                        return false;
+
+                    auto e0 = edges.size();
+                    edges.push_back( Edge{ std::get<0>( v0 ), std::get<0>( v1 ) } );
+
+                    auto e1 = edges.size();
+                    edges.push_back( Edge{ std::get<0>( v1 ), std::get<0>( v2 ) } );
+
+                    auto e2 = edges.size();
+                    edges.push_back( Edge{ std::get<0>( v2 ), std::get<0>( v0 ) } );
+
+                    if( o )
+                        o->set( faces.size() );
+                    if( g )
+                        g->set( faces.size() );
+                    if( m )
+                        m->set( faces.size() );
+                    faces.push_back( Face{ Triplet{ e0, e1, e2 },
+                                           Triplet{ getNormal( v0, e0, e1 ), getNormal( v1, e1, e2 ), getNormal( v2, e2, e0 ) },
+                                           Triplet{ getTexture( v0 ), getTexture( v1 ), getTexture( v2 ) } } );
+                }
+
+                continue;
             }
 
-            continue;
+            s.token.error( L"Unknown command." );
         }
-
-        if( s.token.error( e, L"Unknown command." ) )
-            return false;
+    }
+    catch( ... )
+    {
+        return false;
     }
 
     return true;
@@ -1503,92 +1493,77 @@ static bool getMap( const std::filesystem::path &root, const wchar_t *name, Scan
     return true;
 }
 
-static bool getScalar( const wchar_t *name, Scanner &s, bool &pass, double &scalar, const wchar_t *altName = nullptr )
+static void getScalar( const wchar_t *name, Scanner &s, bool &pass, double &scalar, const wchar_t *altName = nullptr )
 {
     if( pass )
-        return true;
+        return;
 
     bool f = !altName || s.token.s != altName;
 
     if( s.token.s != name && f )
     {
         pass = false;
-        return true;
+        return;
     }
 
-    String e;
-
     s.getToken();
-    if( s.token.error( e, Scanner::Real ) )
-        return false;
+    s.token.error( Scanner::Real );
 
     // Only altName used for scalar is Tr (for d)
     scalar = f ? s.token.x : 1 - s.token.x;
     s.getToken();
 
     pass = true;
-    return true;
 }
 
-static bool getIndex( const wchar_t *name, Scanner &s, bool &pass, unsigned &index, const wchar_t *altName = nullptr )
+static void getIndex( const wchar_t *name, Scanner &s, bool &pass, unsigned &index, const wchar_t *altName = nullptr )
 {
     if( pass )
-        return true;
+        return;
 
     if( s.token.s != name && ( !altName || s.token.s != altName ) )
     {
         pass = false;
-        return true;
+        return;
     }
 
-    String e;
-
     s.getToken();
-    if( s.token.error( e, Scanner::Int ) )
-        return false;
+    s.token.error( Scanner::Int );
 
     index = s.token.n;
     s.getToken();
 
     pass = true;
-    return true;
 }
 
-static bool getVector( const wchar_t *name, Scanner &s, bool &pass, Vector3D &vector, const wchar_t *altName = nullptr )
+static void getVector( const wchar_t *name, Scanner &s, bool &pass, Vector3D &vector, const wchar_t *altName = nullptr )
 {
     if( pass )
-        return true;
+        return;
 
     if( s.token.s != name && ( !altName || s.token.s != altName ) )
     {
         pass = false;
-        return true;
+        return;
     }
-
-    String e;
 
     s.getToken();
     vector.x = s.token.x;
-    if( s.token.error( e, Scanner::Real ) )
-        return false;
+    s.token.error( Scanner::Real );
 
     s.getToken();
     vector.y = s.token.x;
-    if( s.token.error( e, Scanner::Real ) )
-        return false;
+    s.token.error( Scanner::Real );
 
     s.getToken();
     vector.z = s.token.x;
-    if( s.token.error( e, Scanner::Real ) )
-        return false;
+    s.token.error( Scanner::Real );
 
     s.getToken();
 
-    if( vector.x < 0 || vector.x > 1 || vector.y < 0 || vector.y > 1 || vector.z < 0 || vector.z > 1 )
-        return false;
+    makeException( vector.x < 0 || vector.x > 1 || vector.y < 0 || vector.y > 1 || vector.z < 0 || vector.z > 1 );
 
     pass = true;
-    return true;
 }
 
 // Illumination model's index:
@@ -1710,97 +1685,80 @@ void Surface::clear()
 
 bool Surface::input( const std::filesystem::path &path )
 {
-    std::ifstream file;
-    file.open( path, std::ios::binary );
-
-    Scanner s( file, path.generic_wstring() );
-    String e;
-
-    auto root = path.parent_path();
-
-    clear();
-
-    while( s.token.t != Scanner::Nil )
+    try
     {
-        if( s.token.error( e ) )
-            return false;
+        std::ifstream file;
+        file.open( path, std::ios::binary );
 
-        if( s.token.error( e, Scanner::Name ) )
-            return false;
+        Scanner s( file, path.generic_wstring() );
 
-        if( s.token.s != "newmtl" )
-            return false;
+        auto root = path.parent_path();
 
-        s.getLine();
+        clear();
 
-        std::wstring mtl;
-        if( !s.token.s.EncodeW( mtl ) )
-            return false;
-
-        s.getToken();
-
-        auto& material = materials.emplace( mtl, Surface::Material() ).first->second;
-
-        bool pass;
         while( s.token.t != Scanner::Nil )
         {
-            pass = false;
+            s.token.error( Scanner::Name );
 
-            if( s.token.error( e, Scanner::Name ) )
+            if( s.token.s != "newmtl" )
                 return false;
 
-            if( !getScalar( L"Ns", s, pass, material.ns ) ) // Specular exponent (Shininess)
+            s.getLine();
+
+            std::wstring mtl;
+            if( !s.token.s.EncodeW( mtl ) )
                 return false;
-            if( !getScalar( L"Ni", s, pass, material.ni ) ) // Refractive index
+
+            s.getToken();
+
+            auto& material = materials.emplace( mtl, Surface::Material() ).first->second;
+
+            bool pass;
+            while( s.token.t != Scanner::Nil )
+            {
+                pass = false;
+
+                s.token.error( Scanner::Name );
+
+                getScalar( L"Ns", s, pass, material.ns ); // Specular exponent (Shininess)
+                getScalar( L"Ni", s, pass, material.ni ); // Refractive index
+                getIndex( L"illum", s, pass, material.illum ); // Illumination model's index
+                getVector( L"Ka", s, pass, material.ka ); // Color of material for ambient lighting
+                getVector( L"Kd", s, pass, material.kd ); // Color of material for diffuse reflection
+                getVector( L"Ks", s, pass, material.ks ); // Color of material for specular reflection
+                getVector( L"Ke", s, pass, material.ke ); // Color of material for emission
+                getScalar( L"d", s, pass, material.d, L"Tr" ); // Opaqueness
+                getMap( root, L"map_Ns", s, pass, material.map_ns ); // Specular exponent texture
+                getMap( root, L"map_Ka", s, pass, material.map_ka ); // Texture of material for ambient lighting
+                getMap( root, L"map_Kd", s, pass, material.map_kd ); // Texture of material for diffuse reflection
+                getMap( root, L"map_Ks", s, pass, material.map_ks ); // Texture of material for specular reflection
+                getMap( root, L"map_Ke", s, pass, material.map_ke ); // Texture of material for emission
+                getMap( root, L"map_D", s, pass, material.map_d, L"map_d" ); // Opaqueness texture
+                getMap( root, L"bump", s, pass, material.bump, L"map_bump" ); // Effect is like embossing the surface with the texture
+                getMap( root, L"disp", s, pass, material.disp ); // Same as bump, but it modifies actual geometry
+                getMap( root, L"decal", s, pass, material.decal ); // Layered on top of main texture to create stickers/markings/logos/labels
+                getMap( root, L"refl", s, pass, material.refl ); // A reflection of environment in a material
+                if( pass )
+                    continue;
+                break;
+            }
+
+            if( 0 > material.ns || material.ns > 1000 )
                 return false;
-            if( !getIndex( L"illum", s, pass, material.illum ) ) // Illumination model's index
+
+            if( 0 >= material.ni || material.ni > 10 )
                 return false;
-            if( !getVector( L"Ka", s, pass, material.ka ) ) // Color of material for ambient lighting
+
+            if( 0 > material.d || material.d > 1 )
                 return false;
-            if( !getVector( L"Kd", s, pass, material.kd ) ) // Color of material for diffuse reflection
+
+            if( material.illum > 10 )
                 return false;
-            if( !getVector( L"Ks", s, pass, material.ks ) ) // Color of material for specular reflection
-                return false;
-            if( !getVector( L"Ke", s, pass, material.ke ) ) // Color of material for emission
-                return false;
-            if( !getScalar( L"d", s, pass, material.d, L"Tr" ) ) // Opaqueness
-                return false;
-            if( !getMap( root, L"map_Ns", s, pass, material.map_ns ) ) // Specular exponent texture
-                return false;
-            if( !getMap( root, L"map_Ka", s, pass, material.map_ka ) ) // Texture of material for ambient lighting
-                return false;
-            if( !getMap( root, L"map_Kd", s, pass, material.map_kd ) ) // Texture of material for diffuse reflection
-                return false;
-            if( !getMap( root, L"map_Ks", s, pass, material.map_ks ) ) // Texture of material for specular reflection
-                return false;
-            if( !getMap( root, L"map_Ke", s, pass, material.map_ke ) ) // Texture of material for emission
-                return false;
-            if( !getMap( root, L"map_D", s, pass, material.map_d, L"map_d" ) ) // Opaqueness texture
-                return false;
-            if( !getMap( root, L"bump", s, pass, material.bump, L"map_bump" ) ) // Effect is like embossing the surface with the texture
-                return false;
-            if( !getMap( root, L"disp", s, pass, material.disp ) ) // Same as bump, but it modifies actual geometry
-                return false;
-            if( !getMap( root, L"decal", s, pass, material.decal ) ) // Layered on top of main texture to create stickers/markings/logos/labels
-                return false;
-            if( !getMap( root, L"refl", s, pass, material.refl ) ) // A reflection of environment in a material
-                return false;
-            if( pass )
-                continue;
-            break;
         }
-
-        if( 0 > material.ns || material.ns > 1000 )
-            return false;
-
-        if( 0 >= material.ni || material.ni > 10 )
-            return false;
-
-        if( 0 > material.d || material.d > 1 )
-            return false;
-
-        if( material.illum > 10 )
-            return false;
+    }
+    catch( ... )
+    {
+        return false;
     }
 
     return true;

@@ -1,4 +1,9 @@
-﻿#include "Information.h"
+#include "Information.h"
+
+#include <fstream>
+
+#include "UnicodeString.h"
+#include "Scanner.h"
 
 namespace Information
 {
@@ -398,5 +403,248 @@ Item &Item::operator=( Item &&other )
 {
     item = std::move( other.item );
     return *this;
+}
+
+void getItem( Scanner& s, Item & item );
+void getObject( Scanner& s, Object & object );
+void getArray( Scanner& s, Array & array );
+
+void getItem( Scanner& s, Item & item )
+{
+    if( s.token.t == Scanner::Name )
+    {
+        if( s.token.s == "true" )
+        {
+            item = true;
+        }
+        else if( s.token.s == "false" )
+        {
+            item = false;
+        }
+        else if( s.token.s == "null" )
+        {
+            item = Null();
+        }
+        else
+        {
+            s.token.error( L"Expected a value." );
+        }
+    }
+    else if( s.token.t == Scanner::Int )
+    {
+        item = s.token.n;
+    }
+    else if( s.token.t == Scanner::Real )
+    {
+        item = s.token.x;
+    }
+    else if( s.token.t == Scanner::Text )
+    {
+        item = String( ( std::wstring )s.token.s );
+    }
+    else if( s.token.t == Scanner::BraceO )
+    {
+        item = Object();
+        getObject( s, item.as<Object>() );
+    }
+    else if( s.token.t == Scanner::BracketO )
+    {
+        item = Array();
+        getArray( s, item.as<Array>() );
+    }
+    else
+    {
+        s.token.error( L"Expected a value." );
+    }
+}
+
+void getObject( Scanner& s, Object & object )
+{
+    s.token.error( Scanner::BraceO );
+    s.getToken();
+
+    while( true )
+    {
+        s.token.error( Scanner::Name );
+        auto key = ( KeyVerbatim )s.token.s;
+        s.getToken();
+
+        s.token.error( Scanner::Colon );
+        s.getToken();
+
+        Item item;
+        getItem( s, item );
+        object.push( std::move( key ), std::move( item ) );
+
+        s.getToken();
+
+        if( s.token.t != Scanner::Comma )
+            break;
+
+        s.getToken();
+    }
+
+    s.token.error( Scanner::BraceC );
+};
+
+void getArray( Scanner& s, Array & array )
+{
+    s.token.error( Scanner::BracketO );
+    s.getToken();
+
+    while( true )
+    {
+        Item item;
+        getItem( s, item );
+        array.push( std::move( item ) );
+
+        s.getToken();
+
+        if( s.token.t != Scanner::Comma )
+            break;
+
+        s.getToken();
+    }
+
+    s.token.error( Scanner::BracketC );
+};
+
+bool Item::input( const std::filesystem::path &path )
+{
+    try
+    {
+        std::ifstream file;
+        file.open( path, std::ios::binary );
+        Scanner s( file, path.generic_wstring() );
+        getItem( s, *this );
+        file.close();
+    }
+    catch( ... )
+    {
+        return false;
+    }
+    return true;
+}
+
+void setItem( ::String& data, const Item & item, const ::String& tab );
+void setObject( ::String& data, const Object & object, const ::String& tab );
+void setArray( ::String& data, const Array & array, const ::String& tab );
+void setString( ::String& data, const String & string, const ::String& tab );
+
+void setItem( ::String& data, const Item & item, const ::String& tab )
+{
+    if( item.is<bool>() )
+    {
+        data << item.as<bool>();
+    }
+    else if( item.is<long long>() )
+    {
+        data << item.as<long long>();
+    }
+    else if( item.is<long double>() )
+    {
+        data << item.as<long double>();
+    }
+    else if( item.is<Object>() )
+    {
+        setObject( data, item.as<Object>(), tab );
+    }
+    else if( item.is<Array>() )
+    {
+        setArray( data, item.as<Array>(), tab );
+    }
+    else if( item.is<String>() )
+    {
+        setString( data, item.as<String>(), tab );
+    }
+    else
+    {
+        makeException( false );
+    }
+};
+
+void setObject( ::String& data, const Object & object, const ::String& tab )
+{
+    ::String t;
+    t << tab << "\t";
+
+    unsigned i = 0, size = object.size();
+
+    data << tab << "{\n";
+    for( auto& [key, item] : object )
+    {
+        data << t << key << ": ";
+        setItem( data, item, t );
+        ++i;
+        data << ( i < size ? ",\n" : "\n" );
+    }
+    data << tab << "}\n";
+};
+
+void setArray( ::String& data, const Array & array, const ::String& tab )
+{
+    ::String t;
+    t << tab << "\t";
+
+    unsigned i = 0, size = array.size();
+
+    data << tab << "[\n";
+    for( auto& item : array )
+    {
+        data << t;
+        setItem( data, item, t );
+        ++i;
+        data << ( i < size ? ",\n" : "\n" );
+    }
+
+    data << tab << "]\n";
+};
+
+void setString( ::String& data, const String & string, const ::String& tab )
+{
+    data << "\"";
+    for( auto s : ( std::wstring )string )
+    {
+        if( s == L'\\' || s == L'\"' )
+        {
+            data << L'\\' << s;
+        }
+        else if( s == L'\t' )
+        {
+            data << L"\\t";
+        }
+        else if( s == L'\n' )
+        {
+            data << L"\\n";
+        }
+        else
+        {
+            data << s;
+        }
+    }
+    data << "\"";
+}
+
+bool Item::output( const std::filesystem::path &path ) const
+{
+    try
+    {
+        ::String data;
+        setItem( data, *this, "" );
+
+        size_t pos = 0;
+        std::vector<uint8_t> output;
+        makeException( data.EncodeUtf8( output, pos, false ) );
+
+        std::filesystem::create_directories( path.parent_path() );
+        std::ofstream file( path, std::ios::binary );
+        file.write( ( const char* )output.data(), output.size() );
+        file.close();
+    }
+    catch( ... )
+    {
+        return false;
+    }
+    return true;
 }
 }

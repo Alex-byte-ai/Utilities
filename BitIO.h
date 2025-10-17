@@ -7,8 +7,8 @@
 class ReaderBase
 {
 public:
-    virtual bool read( unsigned bits, BitList &value ) = 0;
-    virtual bool read( unsigned bytes, void *value ) = 0;
+    virtual bool read( long long unsigned bits, BitList &value ) = 0;
+    virtual bool read( long long unsigned bytes, void *value ) = 0;
     virtual ~ReaderBase()
     {}
 };
@@ -16,8 +16,8 @@ public:
 class WriterBase
 {
 public:
-    virtual bool write( unsigned bits, BitList value ) = 0;
-    virtual bool write( unsigned bytes, const void *value ) = 0;
+    virtual bool write( long long unsigned bits, BitList value ) = 0;
+    virtual bool write( long long unsigned bytes, const void *value ) = 0;
     virtual ~WriterBase()
     {}
 };
@@ -27,19 +27,19 @@ class SimpleReader : public ReaderBase
 private:
     const uint8_t *p, *end;
 public:
-    SimpleReader( const void *data, unsigned bytes )
+    SimpleReader( const void *data, long long unsigned bytes )
     {
         p = ( const uint8_t * )data;
         end = p + bytes;
     }
 
-    bool read( unsigned, BitList & ) override
+    bool read( long long unsigned, BitList & ) override
     {
         makeException( false );
         return false;
     }
 
-    bool read( unsigned bytes, void *value ) override
+    bool read( long long unsigned bytes, void *value ) override
     {
         if( p + bytes > end )
             return false;
@@ -56,19 +56,19 @@ private:
     uint8_t *p;
     const uint8_t *end;
 public:
-    SimpleWriter( void *data, unsigned bytes )
+    SimpleWriter( void *data, long long unsigned bytes )
     {
         p = ( uint8_t * )data;
         end = p + bytes;
     }
 
-    bool write( unsigned, BitList ) override
+    bool write( long long unsigned, BitList ) override
     {
         makeException( false );
         return false;
     }
 
-    bool write( unsigned bytes, const void *value ) override
+    bool write( long long unsigned bytes, const void *value ) override
     {
         if( p + bytes > end )
             return false;
@@ -82,7 +82,7 @@ template<typename T>
 struct BitPointer
 {
     T *pointer = nullptr;
-    unsigned bitOffset = 0;
+    long long unsigned bitOffset = 0;
 
     BitPointer &operator=( T *p )
     {
@@ -99,7 +99,7 @@ struct BitPointer
         return result;
     }
 
-    void addBits( unsigned delta )
+    void addBits( long long unsigned delta )
     {
         bitOffset += delta;
         auto blockBits = 8 * sizeof( T );
@@ -112,10 +112,10 @@ class Reader : public ReaderBase
 {
 protected:
     BitPointer<const uint8_t> p;
-    unsigned bitPosition, bitVolume;
+    long long unsigned bitPosition, bitVolume;
     const uint8_t *start;
 public:
-    Reader( const void *link, unsigned bytes, unsigned offset )
+    Reader( const void *link, long long unsigned bytes, long long unsigned offset )
     {
         makeException( bytes >= offset );
 
@@ -124,7 +124,7 @@ public:
         bitPosition = 0;
     }
 
-    bool read( unsigned bits, BitList &value ) override
+    bool read( long long unsigned bits, BitList &value ) override
     {
         if( ( bitPosition += bits ) > bitVolume )
             return false;
@@ -133,7 +133,7 @@ public:
         return true;
     }
 
-    bool read( unsigned bytes, void *value ) override
+    bool read( long long unsigned bytes, void *value ) override
     {
         makeException( p.bitOffset == 0 );
 
@@ -145,7 +145,7 @@ public:
         return true;
     }
 
-    unsigned bytesLeft( unsigned limit ) const
+    unsigned bytesLeft( long long unsigned limit ) const
     {
         makeException( p.bitOffset == 0 );
         makeException( bitPosition <= bitVolume );
@@ -164,10 +164,10 @@ class Writer : public WriterBase
 {
 protected:
     BitPointer<uint8_t> p;
-    unsigned bitPosition, bitVolume;
+    long long unsigned bitPosition, bitVolume;
     uint8_t *start;
 public:
-    Writer( void *link, unsigned bytes, unsigned offset )
+    Writer( void *link, long long unsigned bytes, long long unsigned offset )
     {
         makeException( bytes >= offset );
 
@@ -176,7 +176,7 @@ public:
         bitPosition = 0;
     }
 
-    bool write( unsigned bits, BitList value ) override
+    bool write( long long unsigned bits, BitList value ) override
     {
         if( ( bitPosition += bits ) > bitVolume )
             return false;
@@ -185,7 +185,7 @@ public:
         return true;
     }
 
-    bool write( unsigned bytes, const void *value ) override
+    bool write( long long unsigned bytes, const void *value ) override
     {
         makeException( p.bitOffset == 0 );
 

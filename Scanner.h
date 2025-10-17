@@ -32,10 +32,14 @@ public:
         Name,
         Int,
         Real,
+        Text,
         Slash,
         Colon,
+        Comma,
         BraceO,
         BraceC,
+        BracketO,
+        BracketC,
         Plus,
         Minus,
         Line,
@@ -61,9 +65,9 @@ public:
 
         void header( String &e ) const;
 
-        bool error( String &e ) const;
-        bool error( String &e, TokenType expected ) const;
-        bool error( String &e, const String &message ) const;
+        void error() const;
+        void error( TokenType expected ) const;
+        void error( const String &message ) const;
     };
 
     Token token;

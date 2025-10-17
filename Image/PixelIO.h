@@ -11,7 +11,7 @@ namespace ImageConvert
 class PixelReader : public Reader
 {
 protected:
-    unsigned x, y, width, height, totalLineBits, previousBitPosition, linePixelBits;
+    long long unsigned x, y, width, height, totalLineBits, previousBitPosition, linePixelBits;
     const Format fmt;
 public:
     PixelReader( const Format &f, const Reference &r );
@@ -21,14 +21,14 @@ public:
     bool getPixel( Pixel &pixel );
     bool getPixelLn( Pixel &pixel );
 
-    void set( unsigned x0, unsigned y0 );
-    void add( unsigned dx, unsigned dy );
+    void set( long long unsigned x0, long long unsigned y0 );
+    void add( long long unsigned dx, long long unsigned dy );
 };
 
 class PixelWriter : public Writer
 {
 protected:
-    unsigned x, y, width, height, lineBits, linePixelBits;
+    long long unsigned x, y, width, height, lineBits, linePixelBits;
     const Format fmt;
 public:
     PixelWriter( const Format &f, const Reference &r );
@@ -38,7 +38,7 @@ public:
 
     bool putPixelLn( const Pixel &pixel );
 
-    void set( unsigned x0, unsigned y0 );
-    void add( unsigned dx, unsigned dy );
+    void set( long long unsigned x0, long long unsigned y0 );
+    void add( long long unsigned dx, long long unsigned dy );
 };
 }

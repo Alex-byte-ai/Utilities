@@ -1,4 +1,4 @@
-﻿#include "Console.h"
+#include "Console.h"
 
 #include <windows.h>
 
@@ -723,7 +723,7 @@ Console::Console() : connect( uniqueId )
                     SetScrollInfo( hwnd, SB_VERT, &d->scrollY, TRUE );
                     unsigned long long firstVisibleLine = d->scrollY.nPos;
 
-                    // Draw the visible lines, calculate maximum line length.
+                    // Draw the visible lines, calculate maximum line length
                     int maxLineLength = 0, lineLength;
 
                     Coloring::Position position;
@@ -1079,7 +1079,7 @@ bool Console::run()
 
     auto window = CreateWindowExW(
                       0, data->className.c_str(), data->name.c_str(),
-                      WS_OVERLAPPEDWINDOW | WS_VSCROLL | WS_HSCROLL,
+                      WS_OVERLAPPEDWINDOW | WS_VSCROLL | WS_HSCROLL | WS_VISIBLE,
                       x, y, data->windowWidth, data->windowHeight,
                       nullptr, nullptr, GetModuleHandleW( nullptr ), this );
 
@@ -1090,8 +1090,7 @@ bool Console::run()
     SetForegroundWindow( window );
 
     MSG msg;
-    ShowWindow( window, SW_SHOW );
-    while( GetMessage( &msg, nullptr, 0, 0 ) )
+    while( GetMessage( &msg, window, 0, 0 ) )
     {
         TranslateMessage( &msg );
         DispatchMessage( &msg );
@@ -1115,7 +1114,7 @@ void Console::operator()( const std::wstring &msg )
 {
     if( !data )
     {
-        // Communicating with a console from another application.
+        // Communicating with a console from another application
         Message message;
         message.data = msg;
         makeException( connect.output( message ) );
@@ -1132,7 +1131,7 @@ void Console::operator()( const std::wstring &msg )
 
     std::wstring tabulation( data->tabs * data->tabSize, L' ' );
 
-    // Returns true, if it extracted a kine other than last.
+    // Returns true, if it extracted a kine other than last
     auto getLine = []( std::wstring::const_iterator & i, const std::wstring::const_iterator & end, std::wstring & output )
     {
         output.clear();
@@ -1175,7 +1174,7 @@ void Console::operator()( const std::wstring &msg )
                 continue;
             }
 
-            // Ignoring those right now.
+            // Ignoring those right now
             if( symbol < L' ' )
                 continue;
 
@@ -1230,7 +1229,7 @@ void Console::operator++()
 {
     if( !data )
     {
-        // Communicating with a console from another application.
+        // Communicating with a console from another application
         Message message;
         message.type = Message::Type::tabRight;
         makeException( connect.output( message ) );
@@ -1248,7 +1247,7 @@ void Console::operator--()
 {
     if( !data )
     {
-        // Communicating with a console from another application.
+        // Communicating with a console from another application
         Message message;
         message.type = Message::Type::tabLeft;
         makeException( connect.output( message ) );
@@ -1266,7 +1265,7 @@ void Console::color( const std::optional<Color> &c )
 {
     if( !data )
     {
-        // Communicating with a console from another application.
+        // Communicating with a console from another application
         Message message;
         message.type = Message::Type::color;
         message.color = c ? getColor( *c ) : 0x01000000;
@@ -1285,7 +1284,7 @@ bool Console::configure( const std::optional<std::filesystem::path> &configFile 
 {
     if( !data )
     {
-        // Communicating with a console from another application.
+        // Communicating with a console from another application
         Message message;
         message.type = configFile ? Message::Type::configure : Message::Type::configureEmptyOpt;
         if( configFile )
@@ -1581,7 +1580,7 @@ bool Console::command( const std::wstring &cmd )
 {
     if( !data )
     {
-        // Communicating with a console from another application.
+        // Communicating with a console from another application
         Message message;
         message.type = Message::Type::command;
         message.data = cmd;
@@ -1593,7 +1592,7 @@ bool Console::command( const std::wstring &cmd )
     if( !data->thread.inside() )
         data->thread.pauseForScope( _ );
 
-    // Should have better command system.
+    // Should have better command system
     // (!!!)
     try
     {
@@ -1680,7 +1679,7 @@ void Console::flush()
 {
     if( !data )
     {
-        // Communicating with a console from another application.
+        // Communicating with a console from another application
         Message message;
         message.type = Message::Type::flush;
         makeException( connect.output( message ) );
@@ -1700,7 +1699,7 @@ void Console::clear()
 {
     if( !data )
     {
-        // Communicating with a console from another application.
+        // Communicating with a console from another application
         Message message;
         message.type = Message::Type::clear;
         makeException( connect.output( message ) );

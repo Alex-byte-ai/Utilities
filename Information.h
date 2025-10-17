@@ -1,5 +1,6 @@
-﻿#pragma once
+#pragma once
 
+#include <filesystem>
 #include <variant>
 #include <vector>
 #include <string>
@@ -139,6 +140,9 @@ public:
 
     Item &operator=( const Item &other );
     Item &operator=( Item &&other );
+
+    bool input( const std::filesystem::path &path );
+    bool output( const std::filesystem::path &path ) const;
 
     template <typename T>
     Item &operator=( const T &value )

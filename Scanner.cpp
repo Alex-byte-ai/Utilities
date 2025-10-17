@@ -1,5 +1,6 @@
 #include "Scanner.h"
 
+#include "Exception.h"
 #include "Basic.h"
 
 void Scanner::getSymbol()
@@ -105,16 +106,28 @@ String Scanner::Token::name() const
         result << L"Int(" << s << L")";
     else if( t == Real )
         result << L"Real(" << s << L")";
+    else if( t == Text )
+        result << L"Text(" << s << L")";
     else if( t == Slash )
         result << L"Slash";
     else if( t == Colon )
         result << L"Colon";
+    else if( t == Comma )
+        result << L"Comma";
     else if( t == BraceO )
         result << L"BraceO";
     else if( t == BraceC )
         result << L"BraceC";
+    else if( t == BracketO )
+        result << L"BracketO";
+    else if( t == BracketC )
+        result << L"BracketC";
+    else if( t == Plus )
+        result << L"Plus";
+    else if( t == Minus )
+        result << L"Minus";
     else if( t == Line )
-        result << L"Line";
+        result << L"Line(" << s << L")";
     else if( t == NoFile )
         result << L"NoFile";
     else
@@ -133,14 +146,28 @@ String Scanner::Token::description( TokenType t )
         result << L"integer";
     else if( t == Real )
         result << L"real number";
+    else if( t == Text )
+        result << L"text";
+    else if( t == Text )
+        result << L"text";
     else if( t == Slash )
         result << L"slash";
     else if( t == Colon )
         result << L"colon";
+    else if( t == Comma )
+        result << L"comma";
     else if( t == BraceO )
         result << L"opening brace";
     else if( t == BraceC )
         result << L"closing brace";
+    else if( t == BracketO )
+        result << L"opening bracket";
+    else if( t == BracketC )
+        result << L"closing bracket";
+    else if( t == Plus )
+        result << L"plus";
+    else if( t == Minus )
+        result << L"minus";
     else if( t == Line )
         result << L"line";
     else if( t == NoFile )
@@ -158,52 +185,65 @@ void Scanner::Token::header( String &e ) const
     e << L"Caused by token: " << name() << L"\n";
 }
 
-bool Scanner::Token::error( String &e ) const
+void Scanner::Token::error() const
 {
+    String e;
+    auto make = [&]()
+    {
+        throw Exception( ( std::wstring )e );
+    };
+
     if( t == NoFile )
     {
         e << scanner.fileName << L" doesn't exist.";
-        return true;
+        make();
     }
+
     if( t == Bad )
     {
         header( e );
         e << L"Unknown symbol.";
-        return true;
+        make();
     }
-    return false;
 }
 
-bool Scanner::Token::error( String &e, TokenType expected ) const
+void Scanner::Token::error( TokenType expected ) const
 {
-    if( error( e ) )
-        return true;
+    error();
+
+    String e;
+    auto make = [&]()
+    {
+        throw Exception( ( std::wstring )e );
+    };
+
     if( expected == Real )
     {
         if( ( t != Real ) && ( t != Int ) )
         {
             header( e );
             e << "Real or integer number was expected, but " << description( t ) << " was found.";
-            return true;
+            make();
         }
-        return false;
+        return;
     }
+
     if( t != expected )
     {
         header( e );
         e << description( expected ) << " was expected, but " << description( t ) << " was found.";
-        return true;
+        make();
     }
-    return false;
 }
 
-bool Scanner::Token::error( String &e, const String &msg ) const
+void Scanner::Token::error( const String &msg ) const
 {
-    if( error( e ) )
-        return true;
+    error();
+
+    String e;
     header( e );
     e << msg;
-    return true;
+    throw Exception( ( std::wstring )e );
 }
 
 Scanner::Scanner( std::istream &d, const String &f ): data( d ), fileName( f ), token( *this )
@@ -289,6 +329,33 @@ void Scanner::getToken()
         token.s.Add( symbol );
         getSymbol();
         token.t = BraceC;
+        return;
+    }
+
+    if( symbol == '[' )
+    {
+        token.s.Clear();
+        token.s.Add( symbol );
+        getSymbol();
+        token.t = BracketO;
+        return;
+    }
+
+    if( symbol == ']' )
+    {
+        token.s.Clear();
+        token.s.Add( symbol );
+        getSymbol();
+        token.t = BracketC;
+        return;
+    }
+
+    if( symbol == ',' )
+    {
+        token.s.Clear();
+        token.s.Add( symbol );
+        getSymbol();
+        token.t = Comma;
         return;
     }
 
@@ -422,6 +489,52 @@ void Scanner::getToken()
         {
             token.n = -token.n;
             token.x = -token.x;
+        }
+
+        return;
+    }
+
+    if( symbol == '"' || symbol == '\'' )
+    {
+        auto closing = symbol;
+        token.s.Clear();
+
+        while( true )
+        {
+            getSymbol();
+            if( symbol < ' ' )
+            {
+                token.t = Bad;
+                break;
+            }
+            if( symbol == closing )
+            {
+                token.t = Text;
+                getSymbol();
+                break;
+            }
+            if( symbol == '\\' )
+            {
+                getSymbol();
+                if( symbol == '\\' || symbol == closing )
+                {
+                    token.s.Add( symbol );
+                    continue;
+                }
+                if( symbol == 't' )
+                {
+                    token.s.Add( '\t' );
+                    continue;
+                }
+                if( symbol == 'n' )
+                {
+                    token.s.Add( '\n' );
+                    continue;
+                }
+                token.t = Bad;
+                break;
+            }
+            token.s.Add( symbol );
         }
 
         return;

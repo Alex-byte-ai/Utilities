@@ -58,7 +58,7 @@ public:
         // Matrix dimensions must match for multiplication
         makeException( w() == other.h() );
 
-        MatrixArithmetic result( w(), other.h() );
+        MatrixArithmetic result( other.w(), h() );
         for( int i = 0; i < result.h(); ++i )
         {
             for( int j = 0; j < result.w(); ++j )

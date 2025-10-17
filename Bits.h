@@ -6,14 +6,14 @@ using BitList = uint64_t;
 
 // The caller must provide enough space for these, don't forget about bit offset
 
-inline void readBits( const uint8_t *&pointer, unsigned &bitOffset, unsigned bits, BitList &value )
+inline void readBits( const uint8_t *&pointer, long long unsigned &bitOffset, long long unsigned bits, BitList &value )
 {
     BitList byte;
 
     {
-        unsigned compliment = 8 - bitOffset;
+        long long unsigned compliment = 8 - bitOffset;
         BitList mask = ( 1u << compliment ) - 1;
-        unsigned compensation = 0;
+        long long unsigned compensation = 0;
         if( bits < compliment )
         {
             compensation = compliment - bits;
@@ -62,14 +62,14 @@ inline void readBits( const uint8_t *&pointer, unsigned &bitOffset, unsigned bit
     }
 }
 
-inline void writeBits( uint8_t *&pointer, unsigned &bitOffset, unsigned bits, BitList value )
+inline void writeBits( uint8_t *&pointer, long long unsigned &bitOffset, long long unsigned bits, BitList value )
 {
     BitList byte;
 
     {
-        unsigned compliment = 8 - bitOffset;
+        long long unsigned compliment = 8 - bitOffset;
         BitList mask = ( 1u << compliment ) - 1;
-        unsigned compensation = 0;
+        long long unsigned compensation = 0;
         if( bits < compliment )
         {
             compensation = compliment - bits;
@@ -126,7 +126,7 @@ inline void writeBits( uint8_t *&pointer, unsigned &bitOffset, unsigned bits, Bi
 
     if( bits > 0 )
     {
-        unsigned compliment = 8 - bits;
+        long long unsigned compliment = 8 - bits;
         BitList mask = ( 1u << compliment ) - 1;
 
         byte = value << compliment;

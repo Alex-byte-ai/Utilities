@@ -15,7 +15,7 @@ PixelReader::PixelReader( const Format &f, const Reference &r ) : Reader( r.link
 
 void PixelReader::nextLine()
 {
-    unsigned lineBits = bitPosition - previousBitPosition;
+    auto lineBits = bitPosition - previousBitPosition;
 
     if( totalLineBits <= 0 )
         totalLineBits = fmt.lineSize( lineBits - linePixelBits ) * 8;
@@ -55,7 +55,7 @@ bool PixelReader::getPixelLn( Pixel &pixel )
     return getPixel( pixel );
 };
 
-void PixelReader::set( unsigned x0, unsigned y0 )
+void PixelReader::set( long long unsigned x0, long long unsigned y0 )
 {
     x = x0;
     y = y0;
@@ -76,7 +76,7 @@ void PixelReader::set( unsigned x0, unsigned y0 )
     p.addBits( bitPosition );
 };
 
-void PixelReader::add( unsigned dx, unsigned dy )
+void PixelReader::add( long long unsigned dx, long long unsigned dy )
 {
     set( x + dx, y + dy );
 }
@@ -127,7 +127,7 @@ bool PixelWriter::putPixelLn( const Pixel &pixel )
     return putPixel( pixel );
 };
 
-void PixelWriter::set( unsigned x0, unsigned y0 )
+void PixelWriter::set( long long unsigned x0, long long unsigned y0 )
 {
     x = x0;
     y = y0;
@@ -156,7 +156,7 @@ void PixelWriter::set( unsigned x0, unsigned y0 )
     }
 };
 
-void PixelWriter::add( unsigned dx, unsigned dy )
+void PixelWriter::add( long long unsigned dx, long long unsigned dy )
 {
     set( x + dx, y + dy );
 }
