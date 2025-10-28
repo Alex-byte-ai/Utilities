@@ -1,4 +1,4 @@
-﻿#include "Library.h"
+#include "Library.h"
 
 #include <windows.h>
 

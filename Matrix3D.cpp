@@ -1,4 +1,4 @@
-﻿#include "Matrix3D.h"
+#include "Matrix3D.h"
 
 #include "Exception.h"
 #include "Basic.h"

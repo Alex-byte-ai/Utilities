@@ -1,4 +1,4 @@
-﻿#include "Affine2D.h"
+#include "Affine2D.h"
 
 Affine2D::Affine2D() {}
 

@@ -1,4 +1,4 @@
-﻿#include "GetPathToFile.h"
+#include "GetPathToFile.h"
 
 #include <windows.h>
 

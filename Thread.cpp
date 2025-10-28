@@ -1,4 +1,4 @@
-﻿#pragma GCC push_options
+#pragma GCC push_options
 #pragma GCC optimize("O0")
 
 // This code can't be optimized with preserving functionality

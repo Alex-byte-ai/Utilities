@@ -1,4 +1,4 @@
-﻿#include "Meta.h"
+#include "Meta.h"
 
 #include <stdexcept>
 #include <cwctype>

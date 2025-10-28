@@ -1,4 +1,4 @@
-﻿#include "RandomNumber.h"
+#include "RandomNumber.h"
 
 void RandomNumber::init()
 {

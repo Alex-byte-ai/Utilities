@@ -1,4 +1,4 @@
-﻿#include "Vector4D.h"
+#include "Vector4D.h"
 
 #include "Basic.h"
 

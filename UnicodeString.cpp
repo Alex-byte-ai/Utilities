@@ -1,4 +1,4 @@
-﻿#include "UnicodeString.h"
+#include "UnicodeString.h"
 
 #include <string>
 #include <limits>

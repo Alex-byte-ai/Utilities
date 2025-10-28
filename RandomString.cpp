@@ -1,4 +1,4 @@
-﻿#include "RandomString.h"
+#include "RandomString.h"
 
 template<class T>
 void RandomStringBase( RandomNumber &number, const T &sample, T &output, unsigned n, bool clearOutput )

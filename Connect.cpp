@@ -1,4 +1,4 @@
-﻿#include "Connect.h"
+#include "Connect.h"
 
 #include <windows.h>
 

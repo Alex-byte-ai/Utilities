@@ -1,4 +1,4 @@
-﻿#include "Tests.h"
+#include "Tests.h"
 
 Tests::Tests( Console &console, Pause &pause, const Information::Item &information )
     : context( console, pause, information )

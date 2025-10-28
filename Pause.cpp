@@ -1,4 +1,4 @@
-﻿#include "Pause.h"
+#include "Pause.h"
 
 #include <windows.h>
 

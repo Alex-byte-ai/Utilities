@@ -1,4 +1,4 @@
-﻿#include "Affine3D.h"
+#include "Affine3D.h"
 
 Affine3D::Affine3D() {}
 

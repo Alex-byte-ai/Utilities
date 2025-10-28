@@ -1,4 +1,4 @@
-﻿#include "Matrix4D.h"
+#include "Matrix4D.h"
 
 #include "Exception.h"
 #include "Basic.h"

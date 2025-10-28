@@ -1,4 +1,4 @@
-﻿#include "EntityCounter.h"
+#include "EntityCounter.h"
 
 EntityCounter::EntityCounter()
 {

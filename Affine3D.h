@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 
 #include "Matrix3D.h"
 #include "Vector3D.h"

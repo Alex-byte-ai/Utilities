@@ -1,1 +1,1 @@
-﻿#include "ChangedValue.h"
+#include "ChangedValue.h"
