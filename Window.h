@@ -4,7 +4,6 @@
 #include <optional>
 #include <string>
 #include <vector>
-#include <any>
 
 class Popup
 {
@@ -38,29 +37,18 @@ private:
     class Implementation;
     Implementation *implementation;
 public:
-    // Field types
-    enum class Type
-    {
-        Wstring,
-        Int64,
-        Double,
-        Bool,
-        Enum16,
-        Button
-    };
-
     struct Parameter
     {
-        std::function<bool( std::wstring& )> callback;
         std::vector<std::wstring> options;
         std::wstring name;
-        std::any value;
 
-        std::function<std::wstring()> getString;
-        std::function<void()> apply;
+        std::function<bool( const std::wstring& )> set;
+        std::function<std::wstring()> get;
 
-        Parameter( std::wstring n, std::any v, std::vector<std::wstring> o = {}, std::function<bool( std::wstring& )> c = nullptr )
-            : callback( std::move( c ) ), options( std::move( o ) ), name( std::move( n ) ), value( std::move( v ) )
+        std::function<std::wstring()> input;
+
+        Parameter( std::wstring n, std::function<bool( std::wstring )> s = nullptr, std::function<std::wstring()> g = nullptr, std::vector<std::wstring> o = {} )
+            : options( std::move( o ) ), name( std::move( n ) ), set( std::move( s ) ), get( std::move( g ) )
         {}
     };
 
@@ -91,7 +79,7 @@ public:
         std::wstring name;
         bool active;
 
-        Parameter( std::wstring n, bool a = true, std::function<void()> c = nullptr, std::vector<Parameter> p = {} )
+        Parameter( std::wstring n = L"", bool a = false, std::function<void()> c = nullptr, std::vector<Parameter> p = {} )
             : parameters( std::move( p ) ), callback( std::move( c ) ), name( std::move( n ) ), active( a )
         {}
     };

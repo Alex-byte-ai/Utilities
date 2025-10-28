@@ -1,5 +1,6 @@
 #pragma once
 
+#include <type_traits>
 #include <filesystem>
 #include <variant>
 #include <vector>
@@ -18,6 +19,9 @@ using Key = std::variant<KeyVerbatim, KeyNumeric>;
 bool verifyVerbatim( const KeyVerbatim &key );
 
 class Item;
+
+class Null
+{};
 
 class Object
 {
@@ -76,16 +80,13 @@ class String
 public:
     String( std::wstring s ) : string( std::move( s ) ) {}
     String( const wchar_t *s ) : string( s ) {}
-    operator const std::wstring &() const
+    operator std::wstring() const
     {
         return string;
     }
 private:
     std::wstring string;
 };
-
-class Null
-{};
 
 class Wrapper
 {
@@ -147,7 +148,29 @@ public:
     template <typename T>
     Item &operator=( const T &value )
     {
-        item = value;
+        if constexpr( std::is_integral<T>() && std::is_unsigned<T>() )
+        {
+            if constexpr( !std::is_same<T, bool>() )
+            {
+                item = ( unsigned long long )value;
+            }
+            else
+            {
+                item = value;
+            }
+        }
+        else if constexpr( std::is_integral<T>() && std::is_signed<T>() )
+        {
+            item = ( long long )value;
+        }
+        else if constexpr( std::is_floating_point<T>() )
+        {
+            item = ( long double )value;
+        }
+        else
+        {
+            item = value;
+        }
         return *this;
     }
 

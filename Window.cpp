@@ -75,271 +75,30 @@ void Popup::run()
         SetForegroundWindow( lastWindow );
 }
 
-static bool isDigit( wchar_t c )
-{
-    return std::iswdigit( c ) != 0;
-}
-
-static bool containsCharExcludingSelection( HWND edit, wchar_t ch, size_t selStart, size_t selEnd )
-{
-    std::wstring buffer;
-
-    int length = GetWindowTextLengthW( edit );
-    buffer.resize( length );
-
-    GetWindowTextW( edit, &buffer[0], length + 1 );
-
-    for( size_t i = 0; i < buffer.size(); ++i )
-    {
-        if( i >= selStart && i < selEnd )
-            continue;
-        if( buffer[i] == ch )
-            return true;
-    }
-    return false;
-}
-
-static LRESULT CALLBACK editSubclassProcInt( HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam, UINT_PTR, DWORD_PTR )
-{
-    switch( uMsg )
-    {
-    case WM_CHAR:
-        {
-            wchar_t ch = ( wchar_t )wParam;
-            if( ch == 0 || ch == 1 || ch == '\b' || ch == '\r' || ch == '\t' ) // Ignore control chars
-                break;
-
-            DWORD sel = 0;
-            SendMessageW( hWnd, EM_GETSEL, ( WPARAM )&sel, ( LPARAM )&sel );
-            int selStart = LOWORD( sel );
-            int selEnd = HIWORD( sel );
-
-            if( isDigit( ch ) )
-                break;
-
-            if( ch == L'-' )
-            {
-                if( selStart != 0 )
-                    return 0;
-                if( containsCharExcludingSelection( hWnd, L'-', selStart, selEnd ) )
-                    return 0;
-                break;
-            }
-
-            return 0;
-        }
-    case WM_PASTE:
-        {
-            if( !IsClipboardFormatAvailable( CF_UNICODETEXT ) )
-                return 0;
-
-            if( !OpenClipboard( hWnd ) )
-                return 0;
-
-            HGLOBAL hg = GetClipboardData( CF_UNICODETEXT );
-            if( !hg )
-            {
-                CloseClipboard();
-                return 0;
-            }
-
-            wchar_t* clip = ( wchar_t* )GlobalLock( hg );
-            if( !clip )
-            {
-                GlobalUnlock( hg );
-                CloseClipboard();
-                return 0;
-            }
-
-            std::wstring s = clip;
-            GlobalUnlock( hg );
-            CloseClipboard();
-
-            DWORD sel = 0;
-            SendMessageW( hWnd, EM_GETSEL, ( WPARAM )&sel, ( LPARAM )&sel );
-            int selStart = LOWORD( sel );
-            int selEnd = HIWORD( sel );
-
-            std::wstring out;
-            bool seenMinus = containsCharExcludingSelection( hWnd, L'-', selStart, selEnd );
-
-            for( size_t i = 0; i < s.size(); ++i )
-            {
-                wchar_t c = s[i];
-                if( isDigit( c ) )
-                {
-                    out.push_back( c );
-                    continue;
-                }
-                if( c == L'-' && !seenMinus && selStart == 0 && out.empty() )
-                {
-                    out.push_back( c );
-                    seenMinus = true;
-                    continue;
-                }
-            }
-
-            if( !out.empty() )
-            {
-                SendMessageW( hWnd, EM_REPLACESEL, TRUE, ( LPARAM )out.c_str() );
-            }
-            return 0;
-        }
-    default:
-        break;
-    }
-
-    return DefSubclassProc( hWnd, uMsg, wParam, lParam );
-}
-
-static LRESULT CALLBACK editSubclassProcFloat( HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam, UINT_PTR, DWORD_PTR )
-{
-    switch( uMsg )
-    {
-    case WM_CHAR:
-        {
-            wchar_t ch = ( wchar_t )wParam;
-            if( ch == 0 || ch == 1 || ch == '\b' || ch == '\r' || ch == '\t' ) // Ignore control chars
-                break;
-
-            DWORD sel = 0;
-            SendMessageW( hWnd, EM_GETSEL, ( WPARAM )&sel, ( LPARAM )&sel );
-            int selStart = LOWORD( sel );
-            int selEnd = HIWORD( sel );
-
-            if( isDigit( ch ) )
-                break;
-
-            if( ch == L'.' )
-            {
-                if( containsCharExcludingSelection( hWnd, L'.', selStart, selEnd ) )
-                    return 0;
-                break;
-            }
-
-            if( ch == L'-' )
-            {
-                if( selStart != 0 )
-                    return 0;
-                if( containsCharExcludingSelection( hWnd, L'-', selStart, selEnd ) )
-                    return 0;
-                break;
-            }
-
-            return 0;
-        }
-    case WM_PASTE:
-        {
-            if( !IsClipboardFormatAvailable( CF_UNICODETEXT ) )
-                return 0;
-
-            if( !OpenClipboard( hWnd ) )
-                return 0;
-
-            HGLOBAL hg = GetClipboardData( CF_UNICODETEXT );
-            if( !hg )
-            {
-                CloseClipboard();
-                return 0;
-            }
-
-            wchar_t* clip = ( wchar_t* )GlobalLock( hg );
-            if( !clip )
-            {
-                GlobalUnlock( hg );
-                CloseClipboard();
-                return 0;
-            }
-
-            std::wstring s = clip;
-            GlobalUnlock( hg );
-            CloseClipboard();
-
-            DWORD sel = 0;
-            SendMessageW( hWnd, EM_GETSEL, ( WPARAM )&sel, ( LPARAM )&sel );
-            int selStart = LOWORD( sel );
-            int selEnd = HIWORD( sel );
-
-            std::wstring out;
-            bool seenDot = containsCharExcludingSelection( hWnd, L'.', selStart, selEnd );
-            bool seenMinus = containsCharExcludingSelection( hWnd, L'-', selStart, selEnd );
-
-            for( size_t i = 0; i < s.size(); ++i )
-            {
-                wchar_t c = s[i];
-                if( isDigit( c ) )
-                {
-                    out.push_back( c );
-                    continue;
-                }
-                if( c == L'.' && !seenDot )
-                {
-                    out.push_back( c );
-                    seenDot = true;
-                    continue;
-                }
-                if( c == L'-' && !seenMinus && selStart == 0 && out.empty() )
-                {
-                    out.push_back( c );
-                    seenMinus = true;
-                    continue;
-                }
-            }
-
-            if( !out.empty() )
-            {
-                SendMessageW( hWnd, EM_REPLACESEL, TRUE, ( LPARAM )out.c_str() );
-            }
-            return 0;
-        }
-    default:
-        break;
-    }
-
-    return DefSubclassProc( hWnd, uMsg, wParam, lParam );
-}
-
 class Field
 {
 public:
-    enum class Type
+    Field( Settings::Parameter v, int hor, int ver, int width, int height, HWND hwnd, HINSTANCE hInst, int &index )
+        : value( std::move( v ) ), x( hor ), y( ver ), w( width ), h( height )
     {
-        Text,
-        Integer,
-        Float,
-        Option,
-        Button,
-        None
-    };
-
-    Field( Settings::Parameter val, int hor, int ver, int width, int height, HWND hwnd, HINSTANCE hInst, int &index )
-        : value( std::move( val ) ), x( hor ), y( ver ), w( width ), h( height )
-    {
-        auto& v = value.value;
-
-        type = Type::None;
-
-        if( !v.has_value() )
-            type = Type::Button;
-        else if( v.type() == typeid( std::wstring* ) )
-            type = Type::Text;
-        else if( v.type() == typeid( int64_t* ) )
-            type = Type::Integer;
-        else if( v.type() == typeid( double* ) )
-            type = Type::Float;
-        else if( v.type() == typeid( bool* ) || v.type() == typeid( uint16_t* ) )
-            type = Type::Option;
-
-        makeException( type != Type::None );
-
         host = hwnd;
         edit = nullptr;
         offset = -1;
 
-        if( type != Type::Button )
+        idleColor = RGB( 255, 255, 255 );
+        errorColor = RGB( 255, 127, 127 );
+        focusColor = RGB( 255, 255, 127 );
+
+        idle = CreateSolidBrush( idleColor );
+        error = CreateSolidBrush( errorColor );
+        focus = CreateSolidBrush( focusColor );
+
+        valid = true;
+        focused = false;
+
+        if( value.get )
         {
-            description = CreateWindowW( L"STATIC", value.name.c_str(), WS_VISIBLE | WS_CHILD | ES_CENTER,
-                                         x, y, w, h, host, nullptr, hInst, nullptr );
+            description = CreateWindowW( L"STATIC", value.name.c_str(), WS_VISIBLE | WS_CHILD | ES_CENTER, x, y, w, h, host, nullptr, hInst, nullptr );
         }
         else
         {
@@ -348,62 +107,33 @@ public:
 
         self = ( HMENU )( long long unsigned )( unsigned )index++;
 
-        auto initialValueOpt = getInitString();
-        std::wstring initialValue = initialValueOpt ? *initialValueOpt : L"";
-
-        switch( type )
+        if( !value.get )
         {
-        case Type::Text:
-            {
-                edit = CreateWindowW( L"EDIT", initialValue.c_str(), WS_CHILD | WS_VISIBLE | WS_BORDER | ES_LEFT,
-                                      0, 0, 0, 0, host, self, hInst, nullptr );
-            }
-            break;
-        case Type::Integer:
-            {
-                edit = CreateWindowW( L"EDIT", initialValue.c_str(), WS_CHILD | WS_VISIBLE | WS_BORDER | ES_LEFT,
-                                      0, 0, 0, 0, host, self, hInst, nullptr );
-                SetWindowSubclass( edit, editSubclassProcInt, 1, 0 );
-            }
-            break;
-        case Type::Float:
-            {
-                edit = CreateWindowW( L"EDIT", initialValue.c_str(), WS_CHILD | WS_VISIBLE | WS_BORDER | ES_LEFT,
-                                      0, 0, 0, 0, host, self, hInst, nullptr );
-                SetWindowSubclass( edit, editSubclassProcFloat, 1, 0 );
-            }
-            break;
-        case Type::Option:
-            {
-                edit = CreateWindowW( L"COMBOBOX", nullptr, WS_CHILD | WS_VISIBLE | CBS_DROPDOWNLIST | WS_VSCROLL,
-                                      0, 0, 0, 0, hwnd, self, hInst, nullptr );
-
-                if( value.options.empty() )
-                    SendMessageW( edit, CB_ADDSTRING, 0, ( LPARAM )L"none" );
-
-                int id = 0, current = 0;
-                for( auto& option : value.options )
-                {
-                    if( option == initialValue )
-                        current = id;
-
-                    SendMessageW( edit, CB_ADDSTRING, 0, ( LPARAM )option.c_str() );
-                    ++id;
-                }
-
-                SendMessageW( edit, CB_SETCURSEL, current, 0 );
-            }
-            break;
-        case Type::Button:
-            {
-                edit = CreateWindowW( L"BUTTON", value.name.c_str(), WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-                                      x, y, w, h, host, self, hInst, nullptr );
-            }
-            break;
-        case Type::None:
-        default:
-            makeException( false );
+            edit = CreateWindowW( L"BUTTON", value.name.c_str(), WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, x, y, w, h, host, self, hInst, nullptr );
+            return;
         }
+
+        auto initialValue = value.get();
+
+        if( !value.options.empty() )
+        {
+            edit = CreateWindowW( L"COMBOBOX", nullptr, WS_CHILD | WS_VISIBLE | CBS_DROPDOWNLIST | WS_VSCROLL, 0, 0, 0, 0, hwnd, self, hInst, nullptr );
+
+            int id = 0, current = 0;
+            for( auto& option : value.options )
+            {
+                if( option == initialValue )
+                    current = id;
+
+                SendMessageW( edit, CB_ADDSTRING, 0, ( LPARAM )option.c_str() );
+                ++id;
+            }
+
+            SendMessageW( edit, CB_SETCURSEL, current, 0 );
+            return;
+        }
+
+        edit = CreateWindowW( L"EDIT", initialValue.c_str(), WS_CHILD | WS_VISIBLE | WS_BORDER | WS_TABSTOP | ES_AUTOHSCROLL | ES_LEFT, 0, 0, 0, 0, host, self, hInst, nullptr );
     }
 
     ~Field()
@@ -412,127 +142,108 @@ public:
             DestroyWindow( edit );
         if( description )
             DestroyWindow( description );
+        if( idle )
+            DeleteObject( idle );
+        if( error )
+            DeleteObject( error );
     }
 
-    void apply()
+    std::wstring input() const
     {
-        if( type == Type::Button )
-            return;
+        if( !value.get )
+            return L"";
 
-        auto& v = value.value;
-        makeException( v.has_value() );
+        if( !value.options.empty() )
+        {
+            wchar_t buffer[256] = {};
+            int sel = ( int )SendMessageW( edit, CB_GETCURSEL, 0, 0 );
+            if( sel != CB_ERR )
+                SendMessageW( edit, CB_GETLBTEXT, sel, ( LPARAM )buffer );
 
-        auto string = getString();
+            return buffer;
+        }
 
-        if( v.type() == typeid( std::wstring* ) )
-            *std::any_cast<std::wstring*>( v ) = string;
-        else if( value.value.type() == typeid( int64_t* ) )
-            *std::any_cast<std::int64_t*>( v ) = std::stoll( string );
-        else if( value.value.type() == typeid( double* ) )
-            *std::any_cast<double*>( v ) = std::stod( string );
-        else if( value.value.type() == typeid( bool* ) )
-        {
-            makeException( value.options.size() == 2 );
-            *std::any_cast<bool*>( v ) = string == value.options[1];
-        }
-        else if( value.value.type() == typeid( uint16_t* ) )
-        {
-            uint16_t i = 0;
-            for( auto& o : value.options )
-            {
-                if( o == string )
-                {
-                    *std::any_cast<uint16_t*>( v ) = i;
-                    return;
-                }
-                ++i;
-            }
-            makeException( false );
-        }
-        else
-        {
-            makeException( false );
-        }
+        std::wstring buffer;
+        int length = GetWindowTextLengthW( edit );
+        buffer.resize( length );
+        GetWindowTextW( edit, buffer.data(), length + 1 );
+        return buffer;
     }
 
-    std::optional<std::wstring> getInitString()
+    bool apply( WPARAM wParam )
     {
-        auto& v = value.value;
-        if( !v.has_value() )
-            return {};
+        if( !value.set )
+            return false;
 
-        if( v.type() == typeid( std::wstring* ) )
-            return *std::any_cast<std::wstring*>( v );
-        if( value.value.type() == typeid( int64_t* ) )
-            return std::to_wstring( *std::any_cast<std::int64_t*>( v ) );
-        if( value.value.type() == typeid( double* ) )
-            return std::to_wstring( *std::any_cast<double*>( v ) );
-        if( value.value.type() == typeid( bool* ) )
-        {
-            makeException( value.options.size() == 2 );
-            return value.options[*std::any_cast<bool*>( v )];
-        }
-        if( value.value.type() == typeid( uint16_t* ) )
-        {
-            auto i = *std::any_cast<uint16_t*>( v );
-            makeException( i < value.options.size() );
-            return value.options[i];
-        }
-
-        makeException( false );
-        return {};
-    }
-
-    std::wstring getString() const
-    {
-        switch( type )
-        {
-        case Type::Text:
-        case Type::Float:
-        case Type::Integer:
-            {
-                wchar_t buffer[256] = {};
-                GetDlgItemTextW( host, ( int )( unsigned )( long long unsigned )self, buffer, sizeof( buffer ) / sizeof( buffer[0] ) );
-                return buffer;
-            }
-            break;
-        case Type::Option:
-            {
-                wchar_t buffer[256] = {};
-                int sel = ( int )SendMessageW( edit, CB_GETCURSEL, 0, 0 );
-                if( sel != CB_ERR )
-                    SendMessageW( edit, CB_GETLBTEXT, sel, ( LPARAM )buffer );
-
-                return buffer;
-            }
-            break;
-        case Type::Button:
-            return buttonInfo;
-            break;
-        case Type::None:
-        default:
-            makeException( false );
-        }
-        return L"";
-    }
-
-    bool press( WPARAM wParam )
-    {
         HMENU id = ( HMENU )( long long unsigned )LOWORD( wParam );
         if( self != id )
             return false;
 
-        if( type != Type::Button && !value.callback )
-            return false;
-
         WORD code = HIWORD( wParam );
-        if( code != BN_CLICKED )
-            return false;
 
-        return value.callback( buttonInfo );
+        if( value.get )
+        {
+            if( value.options.empty() )
+            {
+                auto update = [&]()
+                {
+                    InvalidateRect( edit, nullptr, TRUE );
+                    UpdateWindow( edit );
+                };
+                if( code == EN_UPDATE )
+                {
+                    valid = value.set( input() );
+                    update();
+                    return true;
+                }
+                if( code == EN_SETFOCUS )
+                {
+                    focused = true;
+                    update();
+                    return true;
+                }
+                if( code == EN_KILLFOCUS )
+                {
+                    focused = false;
+                    update();
+                    return true;
+                }
+            }
+            else
+            {
+                if( code == CBN_DROPDOWN )
+                {
+                    COMBOBOXINFO cbi{};
+                    cbi.cbSize = sizeof( cbi );
+                    if( GetComboBoxInfo( edit, &cbi ) )
+                        dropdown = cbi.hwndList;
+                    return true;
+                }
+                if( code == CBN_CLOSEUP )
+                {
+                    dropdown = nullptr;
+                    return true;
+                }
+                if( code == CBN_SELCHANGE || code == CBN_SELENDOK )
+                {
+                    value.set( input() );
+                    return true;
+                }
+            }
+        }
+        else
+        {
+            if( code == BN_CLICKED )
+            {
+                value.set( L"" );
+                return true;
+            }
+        }
+
+        return false;
     }
 
-    bool size( int width, int /*height*/ )
+    void size( int width, int /*height*/ )
     {
         if( offset < 0 )
             offset = x;
@@ -540,22 +251,41 @@ public:
         auto descriptionHeight = description ? h : 0;
 
         w = width - x - offset;
-        SetWindowPos( edit, nullptr, x, y + descriptionHeight, w, type != Type::Option ? h : 512, SWP_NOZORDER );
+        SetWindowPos( edit, nullptr, x, y + descriptionHeight, w, value.options.empty() ? h : 512, SWP_NOZORDER );
 
         if( description )
             SetWindowPos( description, nullptr, x, y, w, h, SWP_NOZORDER );
+    }
 
-        return true;
+    HBRUSH color( HWND window, HDC hdc )
+    {
+        if( !value.options.empty() )
+            return nullptr;
+
+        if( edit != window )
+            return nullptr;
+
+        SetBkMode( hdc, OPAQUE );
+        SetBkColor( hdc, valid ? ( focused ? focusColor : idleColor ) : errorColor );
+        SetTextColor( hdc, RGB( 0, 0, 0 ) );
+        return valid ? ( focused ? focus : idle ) : error;
+    }
+
+    HWND getDropdown()
+    {
+        return dropdown;
     }
 
 private:
     Settings::Parameter value;
-    std::wstring buttonInfo;
     int x, y, w, h, offset;
-    Type type;
 
-    HWND edit = nullptr, host = nullptr, description = nullptr;
+    HWND edit = nullptr, host = nullptr, description = nullptr, dropdown = nullptr;
     HMENU self = nullptr;
+
+    COLORREF idleColor, errorColor, focusColor;
+    HBRUSH idle, error, focus;
+    bool valid, focused;
 };
 
 class Settings::Implementation
@@ -577,6 +307,7 @@ public:
         wc.hbrBackground = ( HBRUSH )( COLOR_WINDOW + 1 );
         wc.style = CS_HREDRAW | CS_VREDRAW;
         RegisterClassW( &wc );
+        settings = nullptr;
     }
 
     ~Implementation()
@@ -611,48 +342,51 @@ Settings::Settings( std::wstring t, Parameters& p )
                 int y = 16;
                 for( auto& v : impl->parameters )
                 {
-                    auto h = v.value.has_value() ? 16 : 32;
+                    auto h = v.get ? 16 : 32;
 
                     auto& field = *impl->fields.emplace_back( std::make_shared<Field>( v, 16, y, 512, h, hwnd, impl->wc.hInstance, id ) );
 
-                    v.getString = [&field]()
+                    v.input = [&field]()
                     {
-                        return field.getString();
-                    };
-                    v.apply = [&field]()
-                    {
-                        return field.apply();
+                        return field.input();
                     };
 
                     y += 48;
                 }
-
-                return 0;
             }
+            return 0;
         case WM_SIZE:
             {
                 RECT r;
                 GetClientRect( hwnd, &r );
                 int width = r.right - r.left;
                 int height = r.top - r.bottom;
-
                 for( auto& field : impl->fields )
                     field->size( width, height );
-
-                return 0;
             }
+            return 0;
+        case WM_CTLCOLOREDIT:
+            for( auto& field : impl->fields )
+            {
+                if( auto brush = field->color( ( HWND )lParam, ( HDC )wParam ) )
+                    return ( LRESULT )brush;
+            }
+            break;
         case WM_COMMAND:
             for( auto& field : impl->fields )
-                field->press( wParam );
-            return 0;
+            {
+                if( field->apply( wParam ) )
+                    return 0;
+            }
+            break;
         case WM_DESTROY:
             {
                 impl->fields.clear();
                 impl->settings = nullptr;
                 impl = nullptr;
                 // PostQuitMessage( 0 );
-                return 0;
             }
+            return 0;
         default:
             break;
         }
@@ -677,21 +411,52 @@ void Settings::run()
                     nullptr, nullptr, implementation->wc.hInstance, implementation );
     makeException( settings );
 
-    MSG msg;
-    BOOL result;
-    while( implementation->settings && ( result = GetMessage( &msg, settings, 0, 0 ) ) != 0 )
+    auto handle = [&]( HWND window )
     {
-        if( result == -1 )
+        if( !window )
+            return false;
+
+        MSG msg;
+        while( PeekMessageW( &msg, window, 0, 0, PM_NOREMOVE ) )
         {
-            makeException( false );
-            break;
+            if( msg.message == WM_QUIT )
+                return true;
+
+            if( PeekMessageW( &msg, window, 0, 0, PM_REMOVE ) )
+            {
+                TranslateMessage( &msg );
+                DispatchMessageW( &msg );
+            }
         }
-        else
+        return false;
+    };
+
+    auto cycle = [&]()
+    {
+        while( true )
         {
-            TranslateMessage( &msg );
-            DispatchMessage( &msg );
+            if( !implementation->settings )
+                return;
+
+            // Wait for any input/message
+            MsgWaitForMultipleObjects( 0, nullptr, FALSE, INFINITE, QS_ALLINPUT );
+
+            MSG msg;
+            if( PeekMessageW( &msg, nullptr, WM_QUIT, WM_QUIT, PM_NOREMOVE ) )
+                return;
+
+            if( handle( settings ) )
+                return;
+
+            for( auto& field : implementation->fields )
+            {
+                if( handle( field->getDropdown() ) )
+                    return;
+            }
         }
-    }
+    };
+
+    cycle();
 
     DWORD windowProcessId = 0;
     GetWindowThreadProcessId( lastWindow, &windowProcessId );
@@ -707,7 +472,7 @@ public:
     WNDCLASSW wc;
     HWND menu;
 
-    std::vector<std::tuple<UINT_PTR, std::function<void()>>> instances;
+    std::vector<std::tuple<int, std::function<void()>>> instances;
     std::vector<HMENU> menus;
 
     Implementation( WNDPROC windowProc, Parameters& p ) : parameters( p )
@@ -718,6 +483,7 @@ public:
         wc.lpszClassName = L"DropDownMenuHolder";
         wc.hCursor = LoadCursorW( nullptr, IDC_ARROW );
         windowClass = RegisterClassW( &wc );
+        menu = nullptr;
     }
 
     ~Implementation()
@@ -729,24 +495,29 @@ public:
 
 static HMENU dropDown( ContextMenu::Implementation& impl, const ContextMenu::Parameters& parameters )
 {
-    static UINT_PTR index = 1001;
+    static int index = 1001;
 
     if( parameters.empty() )
         return nullptr;
 
-    auto popupMenu = CreatePopupMenu();
+    HMENU popupMenu = CreatePopupMenu(), subMenu;
     for( auto& p : parameters )
     {
-        if( auto subMenu = dropDown( impl, p.parameters ) )
+        if( p.name.empty() )
+        {
+            AppendMenuW( popupMenu, MF_SEPARATOR, 0, nullptr );
+            continue;
+        }
+
+        if( p.active && ( subMenu = dropDown( impl, p.parameters ) ) )
         {
             AppendMenuW( popupMenu, MF_POPUP, ( UINT_PTR )subMenu, p.name.c_str() );
+            continue;
         }
-        else
-        {
-            AppendMenuW( popupMenu, p.active ? MF_STRING : MF_GRAYED, index, p.name.c_str() );
-            impl.instances.emplace_back( index, p.callback );
-            ++index;
-        }
+
+        AppendMenuW( popupMenu, p.active ? MF_STRING : MF_GRAYED, ( UINT_PTR )index, p.name.c_str() );
+        impl.instances.emplace_back( index, p.callback );
+        ++index;
     }
 
     impl.menus.emplace_back( popupMenu );
@@ -796,7 +567,6 @@ ContextMenu::ContextMenu( Parameters p ) : parameters( std::move( p ) )
         case WM_EXITMENULOOP:
             {
                 DestroyWindow( hwnd );
-                MessageBoxW( hwnd, L"Clicked away", L"Menu", MB_OK );
                 return 0;
             }
         case WM_DESTROY:
@@ -839,15 +609,8 @@ void ContextMenu::run()
     BOOL result;
     while( implementation->menu && ( result = GetMessage( &msg, nullptr, 0, 0 ) ) != 0 )
     {
-        if( result == -1 )
-        {
-            makeException( false );
-            break;
-        }
-        else
-        {
-            TranslateMessage( &msg );
-            DispatchMessage( &msg );
-        }
+        makeException( result != -1 );
+        TranslateMessage( &msg );
+        DispatchMessage( &msg );
     }
 }

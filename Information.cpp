@@ -10,14 +10,17 @@ namespace Information
 // KeyVerbatim
 bool verifyVerbatim( const KeyVerbatim &key )
 {
-    static const KeyVerbatim &allowed = L"_0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
     if( key.empty() )
         return false;
-    for( auto &symbol : key )
+
+    size_t i = 0;
+    for( auto c : key )
     {
-        if( allowed.find( symbol ) == std::string::npos )
+        if( !( ( i > 0 && L'0' <= c && c <= L'9' ) || ( L'a' <= c && c <= L'z' ) || ( L'A' <= c && c <= L'Z' ) || ( c == L'_' ) ) )
             return false;
+        ++i;
     }
+
     return true;
 }
 
@@ -319,6 +322,13 @@ void Wrapper::collapse( Item &item )
 {
     auto place = [this]( Item & i )
     {
+        if( !root )
+        {
+            if( self )
+                *self = i;
+            return false;
+        }
+
         std::visit( [&]( const auto & key )
         {
             using T = std::decay_t<decltype( key )>;
@@ -463,6 +473,9 @@ void getObject( Scanner& s, Object & object )
     s.token.error( Scanner::BraceO );
     s.getToken();
 
+    if( s.token.t == Scanner::BraceC )
+        return;
+
     while( true )
     {
         s.token.error( Scanner::Name );
@@ -491,6 +504,9 @@ void getArray( Scanner& s, Array & array )
 {
     s.token.error( Scanner::BracketO );
     s.getToken();
+
+    if( s.token.t == Scanner::BracketC )
+        return;
 
     while( true )
     {
@@ -529,7 +545,7 @@ bool Item::input( const std::filesystem::path &path )
 void setItem( ::String& data, const Item & item, const ::String& tab );
 void setObject( ::String& data, const Object & object, const ::String& tab );
 void setArray( ::String& data, const Array & array, const ::String& tab );
-void setString( ::String& data, const String & string, const ::String& tab );
+void setString( ::String& data, const String & string );
 
 void setItem( ::String& data, const Item & item, const ::String& tab )
 {
@@ -540,6 +556,10 @@ void setItem( ::String& data, const Item & item, const ::String& tab )
     else if( item.is<long long>() )
     {
         data << item.as<long long>();
+    }
+    else if( item.is<unsigned long long>() )
+    {
+        data << item.as<unsigned long long>();
     }
     else if( item.is<long double>() )
     {
@@ -555,7 +575,11 @@ void setItem( ::String& data, const Item & item, const ::String& tab )
     }
     else if( item.is<String>() )
     {
-        setString( data, item.as<String>(), tab );
+        setString( data, item.as<String>() );
+    }
+    else if( item.is<Null>() )
+    {
+        data << "null";
     }
     else
     {
@@ -570,7 +594,7 @@ void setObject( ::String& data, const Object & object, const ::String& tab )
 
     unsigned i = 0, size = object.size();
 
-    data << tab << "{\n";
+    data << "{\n";
     for( auto& [key, item] : object )
     {
         data << t << key << ": ";
@@ -578,7 +602,7 @@ void setObject( ::String& data, const Object & object, const ::String& tab )
         ++i;
         data << ( i < size ? ",\n" : "\n" );
     }
-    data << tab << "}\n";
+    data << tab << "}";
 };
 
 void setArray( ::String& data, const Array & array, const ::String& tab )
@@ -588,7 +612,7 @@ void setArray( ::String& data, const Array & array, const ::String& tab )
 
     unsigned i = 0, size = array.size();
 
-    data << tab << "[\n";
+    data << "[\n";
     for( auto& item : array )
     {
         data << t;
@@ -597,10 +621,10 @@ void setArray( ::String& data, const Array & array, const ::String& tab )
         data << ( i < size ? ",\n" : "\n" );
     }
 
-    data << tab << "]\n";
+    data << tab << "]";
 };
 
-void setString( ::String& data, const String & string, const ::String& tab )
+void setString( ::String& data, const String & string )
 {
     data << "\"";
     for( auto s : ( std::wstring )string )
@@ -631,6 +655,7 @@ bool Item::output( const std::filesystem::path &path ) const
     {
         ::String data;
         setItem( data, *this, "" );
+        data << "\n";
 
         size_t pos = 0;
         std::vector<uint8_t> output;
