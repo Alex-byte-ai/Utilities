@@ -21,11 +21,6 @@ public:
         return *this;
     }
 
-    ChangedValue &operator=( const ChangedValue &other )
-    {
-        return *this = other.value;
-    }
-
     const T &operator*() const
     {
         return value;

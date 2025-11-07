@@ -11,10 +11,10 @@
 #include <map>
 
 #include "UnicodeString.h"
-#include "GetPathToFile.h"
 #include "Exception.h"
 #include "Lambda.h"
 #include "Thread.h"
+#include "Window.h"
 #include "Basic.h"
 
 #include "resource.h"
