@@ -1,7 +1,6 @@
 #include "Window.h"
 
 #include <windows.h>
-#include <commctrl.h>
 
 #include <algorithm>
 #include <cwctype>
@@ -305,7 +304,7 @@ void Trigger::draw( uint32_t *, int, int ) const
 
 void Rectangle::draw( uint32_t *pixels, int width, int height ) const
 {
-    Box::fill( pixels, width, height, color );
+    fill( pixels, width, height, color );
 }
 
 void Image::prepare( int stride, int height )
@@ -407,7 +406,7 @@ void DynamicText::prepare( bool write )
 void DynamicText::draw( uint32_t *canvas, int width, int height ) const
 {
     if( !pixels.empty() )
-        Box::fill( canvas, width, height, pixels[0] );
+        fill( canvas, width, height, pixels[0] );
     StaticText::draw( canvas, width, height );
 }
 
@@ -548,14 +547,14 @@ void Button::focus( bool )
 void TextButton::draw( uint32_t *pixels, int width, int height ) const
 {
     auto color = hovered ? makeColor( 220, 220, 60, 255 ) : makeColor( 200, 200, 200, 255 );
-    Box::fill( pixels, width, height, color );
+    fill( pixels, width, height, color );
 
     StaticText text;
     text.value = desc;
     text.prepare( color );
 
-    text.x = x + ( w - text.w ) * 0.5;
-    text.y = y + ( h - text.h ) * 0.5;
+    text.x = x + ( centerX ? ( w - text.w ) * 0.5 : 16 );
+    text.y = y + ( centerY ? ( h - text.h ) * 0.5 : 16 );
 
     text.draw( pixels, width, height );
 }
@@ -563,7 +562,7 @@ void TextButton::draw( uint32_t *pixels, int width, int height ) const
 void MinimizeButton::draw( uint32_t *pixels, int width, int height ) const
 {
     auto color = hovered ? makeColor( 235, 235, 235, 255 ) : makeColor( 255, 255, 255, 255 );
-    Box::fill( pixels, width, height, color );
+    fill( pixels, width, height, color );
 
     auto black = makeColor( 0, 0, 0, 255 );
 
@@ -573,7 +572,7 @@ void MinimizeButton::draw( uint32_t *pixels, int width, int height ) const
 void MaximizeButton::draw( uint32_t *pixels, int width, int height ) const
 {
     auto color = hovered ? makeColor( 235, 235, 235, 255 ) : makeColor( 255, 255, 255, 255 );
-    Box::fill( pixels, width, height, color );
+    fill( pixels, width, height, color );
 
     auto black = makeColor( 0, 0, 0, 255 );
     auto half = hovered ? makeColor( 188, 188, 188, 255 ) : makeColor( 204, 204, 204, 255 );
@@ -592,7 +591,7 @@ void MaximizeButton::draw( uint32_t *pixels, int width, int height ) const
 void CloseButton::draw( uint32_t *pixels, int width, int height ) const
 {
     auto color = hovered ? makeColor( 245, 10, 10, 255 ) : makeColor( 255, 255, 255, 255 );
-    Box::fill( pixels, width, height, color );
+    fill( pixels, width, height, color );
 
     auto black = makeColor( 0, 0, 0, 255 );
     auto half = hovered ? makeColor( 196, 8, 8, 255 ) : makeColor( 204, 204, 204, 255 );
@@ -751,24 +750,28 @@ void Window::draw( uint32_t *pixels, int width, int height ) const
         object->draw( pixels, width, height );
 }
 
-void Window::add( Box *object )
+void Window::add( Object *object )
 {
     objects.push_back( object );
     if( auto active = dynamic_cast<Active*>( object ) )
         interactive.push_back( active );
 }
 
+void Window::remove( Object *object )
+{
+    auto i = std::find( objects.begin(), objects.end(), object );
+    if( i != objects.end() )
+        objects.erase( i );
+
+    auto j = std::find( interactive.begin(), interactive.end(), object );
+    if( j != interactive.end() )
+        interactive.erase( j );
+}
+
 void Window::run()
 {
-    auto lastWindow = GetForegroundWindow();
-
     GenericWindow self( *this, nullptr );
     self.run();
-
-    DWORD windowProcessId = 0;
-    GetWindowThreadProcessId( lastWindow, &windowProcessId );
-    if( windowProcessId == GetCurrentProcessId() )
-        SetForegroundWindow( lastWindow );
 }
 
 uint32_t makeColor( uint8_t r, uint8_t g, uint8_t b, uint8_t a )
@@ -888,6 +891,9 @@ Popup::Popup( Type type, std::wstring tl, std::wstring inf )
 {
     using namespace GraphicInterface;
 
+    w = 320;
+    h = 240;
+
     Window::update();
 
     titleOrig.value = tl;
@@ -954,9 +960,6 @@ Popup::Popup( Type type, std::wstring tl, std::wstring inf )
 
 void Popup::update()
 {
-    w = 320;
-    h = 240;
-
     Window::update();
 
     info.x = client.x + 16;
@@ -1133,53 +1136,204 @@ void ContextMenu::run()
     }
 }
 
-static std::optional<std::filesystem::path> GetPathToFile( bool open )
+FileManager::FileManager( bool write )
 {
-    Finalizer _;
-
-    wchar_t path[1024], current[1024];
-    OPENFILENAMEW ofn;
-
-    memset( path, 0, sizeof( path ) );
-    memset( current, 0, sizeof( current ) );
-    memset( &ofn, 0, sizeof( ofn ) );
-
-    GetCurrentDirectoryW( sizeof( current ), current );
-
-    std::wstring currentPath = current;
-    _.push( [currentPath]()
+    add( &confirm );
+    confirm.desc = write ? L"Save" : L"Open";
+    if( write )
     {
-        SetCurrentDirectoryW( currentPath.c_str() );
-    } );
-
-    ofn.lStructSize = sizeof( ofn );
-    ofn.lpstrFile = path;
-    ofn.lpstrFile[0] = '\0';
-    ofn.nMaxFile = sizeof( path );
-    ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST | OFN_EXPLORER;
-
-    if( open )
-    {
-        if( GetOpenFileNameW( &ofn ) )
-            return path;
+        confirm.use = [this]()
+        {
+            std::filesystem::path candidate = file.value;
+            if( std::filesystem::exists( candidate ) )
+            {
+                if( std::filesystem::is_regular_file( candidate ) )
+                {
+                    Popup q( Popup::Type::Question, confirm.desc + L" file", L"File already exists, do you want to overwrite it?" );
+                    q.run();
+                    if( q.answer && *q.answer )
+                    {
+                        choice = candidate;
+                        closeButton.use();
+                    }
+                }
+                else
+                {
+                    Popup w( Popup::Type::Warning, confirm.desc + L" file", L"It's not a file." );
+                    w.run();
+                }
+            }
+            else
+            {
+                choice = candidate;
+                closeButton.use();
+            }
+        };
     }
     else
     {
-        if( GetSaveFileNameW( &ofn ) )
-            return path;
+        confirm.use = [this]()
+        {
+            std::filesystem::path candidate = file.value;
+            if( std::filesystem::exists( candidate ) && std::filesystem::is_regular_file( candidate ) )
+            {
+                choice = candidate;
+                closeButton.use();
+            }
+            else
+            {
+                Popup w( Popup::Type::Warning, confirm.desc + L" file", L"File with such path does not exist." );
+                w.run();
+            }
+        };
     }
 
-    return {};
+    add( &reject );
+    reject.desc = L"Cancel";
+    reject.use = [this]()
+    {
+        closeButton.use();
+    };
+
+    add( &file );
+    file.value = L"file";
+    file.prepare();
+
+    w = 512;
+    h = 1024;
+    root = L"C:\\Users\\User\\Downloads";
+    select();
+}
+
+void FileManager::select()
+{
+    if( !root )
+        return;
+
+    for( auto& path : paths )
+        remove( path.get() );
+    paths.clear();
+
+    auto addButton = [this]( const std::filesystem::path & path )
+    {
+        auto button = paths.emplace_back( std::make_shared<GraphicInterface::TextButton>() ).get();
+        add( button );
+
+        button->desc = path.filename().wstring();
+        if( button->desc.empty() )
+            button->desc = path.wstring();
+
+        button->centerX = false;
+
+        if( std::filesystem::is_directory( path ) )
+        {
+            button->use = [this, p = path.lexically_normal()]()
+            {
+                root = p;
+            };
+        }
+        else if( std::filesystem::is_regular_file( path ) )
+        {
+            button->use = [this, p = path.lexically_normal()]()
+            {
+                file.value = p;
+                file.prepare( true );
+            };
+        }
+    };
+
+    try
+    {
+        if( *root == root->parent_path() )
+        {
+            wchar_t drives[MAX_PATH];
+            if( GetLogicalDriveStringsW( MAX_PATH, drives ) )
+            {
+                wchar_t* drive = drives;
+                while( *drive )
+                {
+                    addButton( drive );
+                    drive += wcslen( drive ) + 1;
+                }
+            }
+            else
+            {
+                Popup( Popup::Type::Error, L"Error", L"Failed to get list of drives." ).run();
+            }
+        }
+        else
+        {
+            addButton( *root / L".." );
+        }
+        for( const auto &directory : std::filesystem::directory_iterator{*root} )
+            addButton( directory.path() );
+    }
+    catch( const Exception &e )
+    {
+        Popup( Popup::Type::Error, L"Error", e.message() ).run();
+    }
+    catch( const std::exception &e )
+    {
+        Popup( Popup::Type::Error, L"Error", Exception::extract( e.what() ) ).run();
+    }
+    catch( ... )
+    {
+        Popup( Popup::Type::Error, L"Error", L"Program failed!" ).run();
+    }
+
+    root.reset();
+}
+
+void FileManager::update()
+{
+    select();
+
+    Window::update();
+
+    auto px = client.x + 8;
+    auto py = client.y + 8;
+    auto pw = client.w - 16;
+    auto ph = 16;
+
+    file.x = px;
+    file.y = py;
+    file.w = pw;
+    file.h = ph;
+    py += ph + 8;
+
+    confirm.x = px;
+    confirm.y = py;
+    confirm.w = pw / 2 - 8;
+    confirm.h = ph;
+
+    reject.x = px + confirm.w + 16;
+    reject.y = py;
+    reject.w = confirm.w;
+    reject.h = ph;
+    py += ph + 16;
+
+    for( auto& path : paths )
+    {
+        path->x = px;
+        path->y = py;
+        path->w = pw;
+        path->h = ph;
+        py += ph + 8;
+    }
 }
 
 std::optional<std::filesystem::path> SavePath()
 {
-    return GetPathToFile( false );
+    FileManager fm( true );
+    fm.run();
+    return fm.choice;
 }
 
 std::optional<std::filesystem::path> OpenPath()
 {
-    return GetPathToFile( true );
+    FileManager fm( false );
+    fm.run();
+    return fm.choice;
 }
 
 static void updateWindowContent( GraphicInterface::Window &desc, HWND hwnd )
@@ -1806,6 +1960,8 @@ GenericWindow::~GenericWindow()
 
 void GenericWindow::run()
 {
+    auto lastWindow = GetForegroundWindow();
+
     if( desc.x <= 0 || desc.y <= 0 )
     {
         RECT screenRect;
@@ -1837,6 +1993,11 @@ void GenericWindow::run()
         TranslateMessage( &msg );
         DispatchMessage( &msg );
     }
+
+    DWORD windowProcessId = 0;
+    GetWindowThreadProcessId( lastWindow, &windowProcessId );
+    if( windowProcessId == GetCurrentProcessId() )
+        SetForegroundWindow( lastWindow );
 }
 
 void GenericWindow::close()

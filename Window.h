@@ -11,19 +11,25 @@
 
 namespace GraphicInterface
 {
-struct Box
+struct Object
+{
+    virtual ~Object()
+    {}
+
+    virtual bool inside( int x, int y ) const = 0;
+    virtual void draw( uint32_t *pixels, int width, int height ) const = 0;
+};
+
+struct Box : virtual public Object
 {
     int x = 0, y = 0, w = 0, h = 0;
 
     virtual ~Box()
     {}
 
-    bool inside( int x0, int y0 ) const;
+    virtual bool inside( int x0, int y0 ) const override;
 
     Box& place( const Box& other );
-
-    virtual void draw( uint32_t *pixels, int width, int height ) const = 0;
-
     void fill( uint32_t *pixels, int width, int height, uint32_t color ) const;
     void gradient( uint32_t *pixels, int width, int height ) const;
 };
@@ -40,7 +46,7 @@ struct Rectangle : public Box
     virtual void draw( uint32_t *pixels, int width, int height ) const override;
 };
 
-struct Image : virtual public Box
+struct Image : public Box
 {
     std::vector<uint32_t> pixels;
     int bufferW = 0, bufferH = 0;
@@ -58,7 +64,7 @@ struct StaticText : public Image
     void prepare( uint32_t background );
 };
 
-struct Active : virtual public Box
+struct Active : virtual public Object
 {
     // These functions return true, if an object needs focus after that action
     virtual bool hover( int x, int y ) = 0;
@@ -85,7 +91,7 @@ struct DynamicText : public StaticText, public Active
     virtual void focus( bool f ) override;
 };
 
-struct Combobox : public Active
+struct Combobox : public Box, public Active
 {
     std::vector<std::wstring> options;
     bool isOpen = false;
@@ -105,7 +111,7 @@ struct Combobox : public Active
     virtual void focus( bool f ) override;
 };
 
-struct Button : virtual public Box, public Active
+struct Button : public Box, public Active
 {
     std::function<void()> use;
     bool hovered = false;
@@ -119,7 +125,9 @@ struct Button : virtual public Box, public Active
 
 struct TextButton : public Button
 {
+    bool centerX = true, centerY = true;
     std::wstring desc;
+
     virtual void draw( uint32_t *pixels, int width, int height ) const override;
 };
 
@@ -133,12 +141,12 @@ struct MaximizeButton : public Button
     virtual void draw( uint32_t *pixels, int width, int height ) const override;
 };
 
-struct CloseButton : public Button
+struct CloseButton : virtual public Button
 {
     virtual void draw( uint32_t *pixels, int width, int height ) const override;
 };
 
-struct Window : public Box
+struct Window : virtual public Box
 {
     Window( int h = 24, int sz = 16, int bh = 24, int tgw = 8, int b = 1 );
     Window( const Window &other ) = default;
@@ -160,13 +168,14 @@ struct Window : public Box
     virtual int minHeight() const;
     virtual void update();
 
-    void draw( uint32_t *pixels, int width, int height ) const;
+    virtual void draw( uint32_t *pixels, int width, int height ) const override;
 
-    void add( Box *object );
+    void add( Object *object );
+    void remove( Object *object );
 
     void run();
 
-    std::vector<Box*> objects;
+    std::vector<Object*> objects;
     std::vector<Active*> interactive;
 
     Active* focus = nullptr;
@@ -255,6 +264,22 @@ public:
     Parameters parameters;
 
     void run();
+};
+
+struct FileManager : public GraphicInterface::Window
+{
+    FileManager( bool write );
+
+    GraphicInterface::DynamicText file;
+    GraphicInterface::TextButton confirm, reject;
+
+    std::vector<std::shared_ptr<GraphicInterface::TextButton>> paths;
+
+    std::optional<std::filesystem::path> root, choice;
+
+    void select();
+
+    virtual void update() override;
 };
 
 std::optional<std::filesystem::path> SavePath();
