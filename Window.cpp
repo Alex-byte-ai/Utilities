@@ -225,7 +225,151 @@ static bool renderTextToBuffer(
     return true;
 }
 
-bool Box::inside( int x0, int y0 ) const
+Object::Object()
+{}
+
+Object::Object( const Object& )
+{}
+
+Object::~Object()
+{}
+
+Group::Group() : Object()
+{}
+
+Group::Group( const Group& other ) : Object( other )
+{}
+
+Group::~Group()
+{}
+
+bool Group::contains( int x, int y ) const
+{
+    for( auto object : objects )
+    {
+        if( object->contains( x, y ) )
+            return true;
+    }
+    return false;
+}
+
+void Group::draw( uint32_t *pixels, int width, int height ) const
+{
+    for( auto object : objects )
+        object->draw( pixels, width, height );
+}
+
+void Group::add( Object *object )
+{
+    objects.push_back( object );
+}
+
+void Group::remove( Object *object )
+{
+    auto i = std::find( objects.begin(), objects.end(), object );
+    if( i != objects.end() )
+        objects.erase( i );
+}
+
+Active::Active() : hovered( false )
+{}
+
+Active::Active( const Active& other ) : Object(), hovered( other.hovered )
+{}
+
+Active::~Active()
+{}
+
+ActiveGroup::ActiveGroup() : Group(), Active(), target( nullptr )
+{}
+
+ActiveGroup::ActiveGroup( const ActiveGroup& other ) : Object(), Group( other ), Active( other ), target( nullptr )
+{}
+
+ActiveGroup::~ActiveGroup()
+{}
+
+static bool focusIt( Active *& target, Active * active, bool refocus )
+{
+    if( !refocus )
+        return false;
+
+    if( target )
+        target->focus( false );
+
+    target = active;
+    target->focus( true );
+    return true;
+}
+
+bool ActiveGroup::hover( int x, int y )
+{
+    bool absorbed = false;
+    for( auto i = interactive.rbegin(); i != interactive.rend(); ++i )
+    {
+        auto active = *i;
+        bool contains = !absorbed && active->contains( x, y );
+        active->hovered = contains;
+        if( contains )
+            absorbed = false;
+    }
+
+    bool needFocus = false;
+    for( auto active : interactive )
+    {
+        if( focusIt( target, active, active->hover( x, y ) ) )
+            needFocus = true;
+    }
+    return needFocus;
+}
+
+bool ActiveGroup::click( bool release, int x, int y )
+{
+    for( auto i = interactive.rbegin(); i != interactive.rend(); ++i )
+    {
+        auto& active = * i;
+        if( active->contains( x, y ) )
+        {
+            if( focusIt( target, active, active->click( release, x, y ) ) )
+                return true;
+        }
+    }
+    return false;
+}
+
+bool ActiveGroup::input( wchar_t c )
+{
+    return target && target->input( c );
+}
+
+void ActiveGroup::focus( bool )
+{}
+
+void ActiveGroup::add( Object *object )
+{
+    Group::add( object );
+    if( auto active = dynamic_cast<Active*>( object ) )
+        interactive.push_back( active );
+}
+
+void ActiveGroup::remove( Object *object )
+{
+    Group::remove( object );
+    auto i = std::find( interactive.begin(), interactive.end(), object );
+    if( i != interactive.end() )
+        interactive.erase( i );
+}
+
+Box::Box() : Object(), x( 0 ), y( 0 ), w( 0 ), h( 0 )
+{}
+
+Box::Box( const Box& other ) : Object( other )
+{}
+
+Box::~Box()
+{}
+
+bool Box::contains( int x0, int y0 ) const
 {
     return x <= x0 && x0 < x + w && y <= y0 && y0 < y + h;
 }
@@ -299,13 +443,40 @@ void Box::gradient( uint32_t *pixels, int width, int height ) const
     }
 }
 
+Trigger::Trigger() : Box()
+{}
+
+Trigger::Trigger( const Trigger& other ) : Object( other ), Box( other )
+{}
+
+Trigger::~Trigger()
+{}
+
 void Trigger::draw( uint32_t *, int, int ) const
+{}
+
+Rectangle::Rectangle() : color( 0 )
+{}
+
+Rectangle::Rectangle( const Rectangle& other ) : Object( other ), Box( other ), color( other.color )
+{}
+
+Rectangle::~Rectangle()
 {}
 
 void Rectangle::draw( uint32_t *pixels, int width, int height ) const
 {
     fill( pixels, width, height, color );
 }
+
+Image::Image() : Box(), bufferW( 0 ), bufferH( 0 )
+{}
+
+Image::Image( const Image& other ) : Object( other ), Box( other ), pixels( other.pixels ), bufferW( other.bufferW ), bufferH( other.bufferH )
+{}
+
+Image::~Image()
+{}
 
 void Image::prepare( int stride, int height )
 {
@@ -373,11 +544,22 @@ void Image::draw( uint32_t *otherPixels, int width, int height ) const
     }
 }
 
+StaticText::StaticText() : Image()
+{
+    color = makeColor( 0, 0, 0, 255 );
+}
+
+StaticText::StaticText( const StaticText& other ) : Object( other ), Image( other ), color( other.color ), value( other.value )
+{}
+
+StaticText::~StaticText()
+{}
+
 void StaticText::prepare( uint32_t background )
 {
     w = 0;
     h = 0;
-    if( renderTextToBuffer( value, L"DejaVuSansMono", makeColor( 0, 0, 0, 255 ), background, 0, bufferW, bufferH, pixels ) )
+    if( renderTextToBuffer( value, L"DejaVuSansMono", color, background, 0, bufferW, bufferH, pixels ) )
     {
         w = bufferW;
         h = bufferH;
@@ -390,6 +572,15 @@ void StaticText::prepare( uint32_t background )
     }
 }
 
+DynamicText::DynamicText() : StaticText(), Active()
+{}
+
+DynamicText::DynamicText( const DynamicText& other ) : Object( other ), StaticText( other ), Active( other ), valid( other.valid ), focused( other.focused ), setCallback( other.setCallback )
+{}
+
+DynamicText::~DynamicText()
+{}
+
 void DynamicText::prepare( bool write )
 {
     auto idleColor = makeColor( 255, 255, 255, 255 );
@@ -399,8 +590,8 @@ void DynamicText::prepare( bool write )
     if( write )
         valid = setCallback ? setCallback( value ) : false;
 
-    auto color = valid ? ( focused ? focusColor : idleColor ) : errorColor;
-    StaticText::prepare( color );
+    auto background = valid ? ( focused ? focusColor : idleColor ) : errorColor;
+    StaticText::prepare( background );
 }
 
 void DynamicText::draw( uint32_t *canvas, int width, int height ) const
@@ -444,6 +635,15 @@ void DynamicText::focus( bool f )
     }
 }
 
+Combobox::Combobox() : Box(), Active(), option( 0 ), isOpen( false )
+{}
+
+Combobox::Combobox( const Combobox& other ) : Object( other ), Box( other ), Active( other ), setCallback( other.setCallback ), options( other.options ), option( other.option ), isOpen( false )
+{}
+
+Combobox::~Combobox()
+{}
+
 void Combobox::open( bool f )
 {
     if( !f && isOpen && setCallback )
@@ -455,7 +655,7 @@ void Combobox::open( bool f )
 
 size_t Combobox::select( int x0, int y0 )
 {
-    if( !inside( x0, y0 ) )
+    if( !contains( x0, y0 ) )
         return option;
 
     return ( y0 - y ) / 16;
@@ -501,7 +701,7 @@ void Combobox::draw( uint32_t *pixels, int width, int height ) const
 
 bool Combobox::hover( int x0, int y0 )
 {
-    if( !inside( x0, y0 ) )
+    if( !contains( x0, y0 ) )
         open( false );
     if( isOpen )
         option = select( x0, y0 );
@@ -523,16 +723,28 @@ bool Combobox::input( wchar_t )
 void Combobox::focus( bool )
 {}
 
-bool Button::hover( int x0, int y0 )
+Button::Button() : Box(), Active(), wasHovered( false ), activateByHovering( false ), off( false )
+{}
+
+Button::Button( const Button& other ) : Object( other ), Box( other ), Active( other ), wasHovered( false ), activateByHovering( other.activateByHovering ), off( other.off ), use( other.use )
+{}
+
+Button::~Button()
+{}
+
+bool Button::hover( int, int )
 {
-    hovered = inside( x0, y0 );
+    if( activateByHovering && !off && use && wasHovered != hovered )
+        use( hovered );
+
+    wasHovered = hovered;
     return false;
 }
 
 bool Button::click( bool release, int, int )
 {
-    if( release && use )
-        use();
+    if( !activateByHovering && !off && use )
+        use( release );
     return false;
 }
 
@@ -544,12 +756,38 @@ bool Button::input( wchar_t )
 void Button::focus( bool )
 {}
 
+ActiveTrigger::ActiveTrigger() : Button()
+{}
+
+ActiveTrigger::ActiveTrigger( const ActiveTrigger& other ) : Object( other ), Button( other )
+{}
+
+ActiveTrigger::~ActiveTrigger()
+{}
+
+void ActiveTrigger::draw( uint32_t *, int, int ) const
+{}
+
+TextButton::TextButton() : Button(), centerX( true ), centerY( true )
+{}
+
+TextButton::TextButton( const TextButton& other ) : Object( other ), Button( other ), centerX( other.centerX ), centerY( other.centerX ), desc( other.desc )
+{}
+
+TextButton::~TextButton()
+{}
+
 void TextButton::draw( uint32_t *pixels, int width, int height ) const
 {
-    auto color = hovered ? makeColor( 220, 220, 60, 255 ) : makeColor( 200, 200, 200, 255 );
+    if( w <= 0 || h <= 0 )
+        return;
+
+    auto color = hovered && !off ? makeColor( 220, 220, 60, 255 ) : makeColor( 200, 200, 200, 255 );
     fill( pixels, width, height, color );
 
     StaticText text;
+    text.color = off ? makeColor( 128, 128, 128, 255 ) : makeColor( 0, 0, 0, 255 );
+
     text.value = desc;
     text.prepare( color );
 
@@ -557,7 +795,22 @@ void TextButton::draw( uint32_t *pixels, int width, int height ) const
     text.y = y + ( centerY ? ( h - text.h ) * 0.5 : 16 );
 
     text.draw( pixels, width, height );
+
+    if( activateByHovering )
+    {
+        drawLineRD( pixels, width, height, x + w - 16, y + 4, 4, text.color );
+        drawLineRU( pixels, width, height, x + w - 16, y + h - 5, 4, text.color );
+    }
 }
+
+MinimizeButton::MinimizeButton() : Button()
+{}
+
+MinimizeButton::MinimizeButton( const MinimizeButton& other ) : Object( other ), Button( other )
+{}
+
+MinimizeButton::~MinimizeButton()
+{}
 
 void MinimizeButton::draw( uint32_t *pixels, int width, int height ) const
 {
@@ -568,6 +821,15 @@ void MinimizeButton::draw( uint32_t *pixels, int width, int height ) const
 
     drawLineR( pixels, width, height, x + 3, y + h / 2 - 1, w - 6, black );
 }
+
+MaximizeButton::MaximizeButton() : Button()
+{}
+
+MaximizeButton::MaximizeButton( const MaximizeButton& other ) : Object( other ), Button( other )
+{}
+
+MaximizeButton::~MaximizeButton()
+{}
 
 void MaximizeButton::draw( uint32_t *pixels, int width, int height ) const
 {
@@ -587,6 +849,15 @@ void MaximizeButton::draw( uint32_t *pixels, int width, int height ) const
     drawLineR( pixels, width, height, x + 3, y + h - 4, w - 6, black );
     drawLineD( pixels, width, height, x + w - 4, y + 3, w - 6, black );
 }
+
+CloseButton::CloseButton() : Button()
+{}
+
+CloseButton::CloseButton( const CloseButton& other ) : Object( other ), Button( other )
+{}
+
+CloseButton::~CloseButton()
+{}
 
 void CloseButton::draw( uint32_t *pixels, int width, int height ) const
 {
@@ -614,11 +885,12 @@ Window::Window( int th, int sz, int bh, int tgw, int b )
     titleBar.color = makeColor( 255, 255, 255, 255 );
     leftBorder.color = rightBorder.color = topBorder.color = bottomBorder.color = makeColor( 85, 85, 85, 255 );
 
+    add( &self );
     add( &client );
     add( &content );
     add( &titleBar );
     add( &icon );
-    add( &titleOrig );
+    add( &title );
     add( &closeButton );
     add( &maximizeButton );
     add( &minimizeButton );
@@ -631,6 +903,41 @@ Window::Window( int th, int sz, int bh, int tgw, int b )
     add( &leftTrigger );
     add( &rightTrigger );
 }
+
+Window::Window( const Window &other ) :
+    Object( other ), ActiveGroup( other ),
+    titlebarHeight( other.titlebarHeight ), buttonSize( other.buttonSize ), buttonSpacingH( other.buttonSpacingH ),
+    triggerWidth( other.triggerWidth ), borderWidth( other.borderWidth ),
+    self( other.self ), topTrigger( other.topTrigger ), bottomTrigger( other.bottomTrigger ), leftTrigger( other.leftTrigger ), rightTrigger( other.rightTrigger ),
+    titleBar( other.titleBar ), leftBorder( other.leftBorder ), rightBorder( other.rightBorder ), topBorder( other.topBorder ), bottomBorder( other.bottomBorder ), client( other.client ),
+    icon( other.icon ), content( other.content ), title( other.title ),
+    minimizeButton( other.minimizeButton ), maximizeButton( other.maximizeButton ), closeButton( other.closeButton )
+{
+    minimizeButton.use = nullptr;
+    maximizeButton.use = nullptr;
+    closeButton.use = nullptr;
+
+    add( &self );
+    add( &client );
+    add( &content );
+    add( &titleBar );
+    add( &icon );
+    add( &title );
+    add( &closeButton );
+    add( &maximizeButton );
+    add( &minimizeButton );
+    add( &leftBorder );
+    add( &rightBorder );
+    add( &topBorder );
+    add( &bottomBorder );
+    add( &topTrigger );
+    add( &bottomTrigger );
+    add( &leftTrigger );
+    add( &rightTrigger );
+}
+
+Window::~Window()
+{}
 
 int Window::minWidth() const
 {
@@ -650,43 +957,43 @@ int Window::minHeight() const
 
 void Window::update()
 {
-    titleBar.x = x;
-    titleBar.y = y;
-    titleBar.w = w;
+    titleBar.x = self.x;
+    titleBar.y = self.y;
+    titleBar.w = self.w;
     titleBar.h = titlebarHeight + borderWidth;
 
-    rightTrigger.x = x + w - triggerWidth;
-    rightTrigger.y = y;
+    rightTrigger.x = self.x + self.w - triggerWidth;
+    rightTrigger.y = self.y;
     rightTrigger.w = triggerWidth;
-    rightTrigger.h = h;
+    rightTrigger.h = self.h;
 
-    bottomTrigger.x = x;
-    bottomTrigger.y = y + h - triggerWidth;
-    bottomTrigger.w = w;
+    bottomTrigger.x = self.x;
+    bottomTrigger.y = self.y + self.h - triggerWidth;
+    bottomTrigger.w = self.w;
     bottomTrigger.h = triggerWidth;
 
-    leftBorder.x = x;
-    leftBorder.y = y;
+    leftBorder.x = self.x;
+    leftBorder.y = self.y;
     leftBorder.w = borderWidth;
-    leftBorder.h = h;
+    leftBorder.h = self.h;
 
-    rightBorder.x = x + w - borderWidth;
-    rightBorder.y = y;
+    rightBorder.x = self.x + self.w - borderWidth;
+    rightBorder.y = self.y;
     rightBorder.w = borderWidth;
-    rightBorder.h = h;
+    rightBorder.h = self.h;
 
-    topBorder.x = x;
-    topBorder.y = y;
-    topBorder.w = w;
+    topBorder.x = self.x;
+    topBorder.y = self.y;
+    topBorder.w = self.w;
     topBorder.h = borderWidth;
 
-    bottomBorder.x = x;
-    bottomBorder.y = y + h - borderWidth;
-    bottomBorder.w = w;
+    bottomBorder.x = self.x;
+    bottomBorder.y = self.y + self.h - borderWidth;
+    bottomBorder.w = self.w;
     bottomBorder.h = borderWidth;
 
-    closeButton.x = x + w - buttonSpacingV - buttonSize - borderWidth;
-    closeButton.y = y + buttonSpacingV + borderWidth;
+    closeButton.x = self.x + self.w - buttonSpacingV - buttonSize - borderWidth;
+    closeButton.y = self.y + buttonSpacingV + borderWidth;
     closeButton.w = buttonSize;
     closeButton.h = buttonSize;
 
@@ -699,17 +1006,17 @@ void Window::update()
     icon.y = borderWidth + ( titlebarHeight - icon.h ) / 2;
     icon.x = icon.y;
 
-    titleOrig.x = icon.x + icon.w + buttonSpacingV;
-    titleOrig.y = closeButton.y;
+    title.x = icon.x + icon.w + buttonSpacingV;
+    title.y = closeButton.y;
 
-    titleOrig.w = w - borderWidth - 2 * buttonSpacingV - 3 * buttonSize - 2 * buttonSpacingH - titleOrig.x;
-    if( titleOrig.w < titleOrig.bufferW )
-        titleOrig.w = 0;
+    title.w = self.w - borderWidth - 2 * buttonSpacingV - 3 * buttonSize - 2 * buttonSpacingH - title.x;
+    if( title.w < title.bufferW )
+        title.w = 0;
 
-    client.x = x + borderWidth;
-    client.y = y + borderWidth + titlebarHeight;
-    client.w = w - 2 * borderWidth;
-    client.h = h - titlebarHeight - 2 * borderWidth;
+    client.x = self.x + borderWidth;
+    client.y = self.y + borderWidth + titlebarHeight;
+    client.w = self.w - 2 * borderWidth;
+    client.h = self.h - titlebarHeight - 2 * borderWidth;
 
     content.w = content.bufferW;
     content.h = content.bufferH;
@@ -744,34 +1051,10 @@ void Window::update()
     }
 }
 
-void Window::draw( uint32_t *pixels, int width, int height ) const
-{
-    for( auto object : objects )
-        object->draw( pixels, width, height );
-}
-
-void Window::add( Object *object )
-{
-    objects.push_back( object );
-    if( auto active = dynamic_cast<Active*>( object ) )
-        interactive.push_back( active );
-}
-
-void Window::remove( Object *object )
-{
-    auto i = std::find( objects.begin(), objects.end(), object );
-    if( i != objects.end() )
-        objects.erase( i );
-
-    auto j = std::find( interactive.begin(), interactive.end(), object );
-    if( j != interactive.end() )
-        interactive.erase( j );
-}
-
 void Window::run()
 {
-    GenericWindow self( *this, nullptr );
-    self.run();
+    GenericWindow g( *this, nullptr );
+    g.run();
 }
 
 uint32_t makeColor( uint8_t r, uint8_t g, uint8_t b, uint8_t a )
@@ -780,7 +1063,7 @@ uint32_t makeColor( uint8_t r, uint8_t g, uint8_t b, uint8_t a )
 }
 }
 
-Settings::Settings( std::wstring tl, Parameters& p ) : parameters( p )
+Settings::Settings( std::wstring tl, const Parameters& p ) : parameters( p )
 {
     using namespace GraphicInterface;
 
@@ -813,9 +1096,10 @@ Settings::Settings( std::wstring tl, Parameters& p ) : parameters( p )
             object->w = width;
             object->h = height;
 
-            object->use = [s = value.set]()
+            object->use = [s = value.set]( bool release )
             {
-                s( L"" );
+                if( release )
+                    s( L"released" );
             };
             return;
         }
@@ -852,10 +1136,10 @@ Settings::Settings( std::wstring tl, Parameters& p ) : parameters( p )
         object->prepare();
     };
 
-    w = 300;
-    h = 1024;
-    titleOrig.value = tl;
-    titleOrig.prepare( titleBar.color );
+    self.w = 300;
+    self.h = 1024;
+    title.value = tl;
+    title.prepare( titleBar.color );
     Window::update();
 
     int position = 16 + Window::titleBar.h;
@@ -873,31 +1157,32 @@ Settings::Settings( std::wstring tl, Parameters& p ) : parameters( p )
     }
 }
 
+Settings::Settings( const Settings& other ) : Settings( other.title.value, other.parameters )
+{}
+
+Settings::~Settings()
+{}
+
 void Settings::update()
 {
     Window::update();
 
     for( auto& field : fields )
     {
-        field->w = w - 2 * borderWidth - 2 * 16;
-        field->x = x + borderWidth + 16;
+        field->w = self.w - 2 * borderWidth - 2 * 16;
+        field->x = self.x + borderWidth + 16;
     }
 }
 
-Settings::~Settings()
-{}
-
-Popup::Popup( Type type, std::wstring tl, std::wstring inf )
+Popup::Popup( Type t, std::wstring tl, std::wstring inf ) : type( t )
 {
     using namespace GraphicInterface;
 
-    w = 320;
-    h = 240;
+    self.w = 320;
+    self.h = 240;
 
-    Window::update();
-
-    titleOrig.value = tl;
-    titleOrig.prepare( titleBar.color );
+    title.value = tl;
+    title.prepare( titleBar.color );
 
     switch( type )
     {
@@ -924,39 +1209,65 @@ Popup::Popup( Type type, std::wstring tl, std::wstring inf )
 
     if( type == Type::Question )
     {
-        buttons.push_back( &yes );
-        buttons.push_back( &no );
-
-        yes.desc = L"yes";
-        no.desc = L"no";
-
-        yes.use = [this]()
+        buttons.push_back( &yesButton );
+        yesButton.desc = L"yes";
+        yesButton.use = [this]( bool release )
         {
-            answer = true;
-            closeButton.use();
+            if( release )
+                answer = true;
+            closeButton.use( release );
         };
 
-        no.use = [this]()
+        buttons.push_back( &noButton );
+        noButton.desc = L"no";
+        noButton.use = [this]( bool release )
         {
-            answer = false;
-            closeButton.use();
+            if( release )
+                answer = false;
+            closeButton.use( release );
         };
     }
     else
     {
-        buttons.push_back( &cancel );
-
-        cancel.desc = L"ok";
-
-        cancel.use = [this]()
+        buttons.push_back( &cancelButton );
+        cancelButton.desc = L"ok";
+        cancelButton.use = [this]( bool release )
         {
-            closeButton.use();
+            closeButton.use( release );
         };
     }
 
     for( auto button : buttons )
         add( button );
 }
+
+Popup::Popup( const Popup& other ) : Popup( other.type, other.title.value, other.info.value )
+{
+    answer = other.answer;
+
+    switch( type )
+    {
+    case Type::Info:
+        info.value = info.value.substr( 6 );
+        break;
+    case Type::Error:
+        info.value = info.value.substr( 7 );
+        break;
+    case Type::Warning:
+        info.value = info.value.substr( 9 );
+        break;
+    case Type::Question:
+        info.value = info.value.substr( 10 );
+        break;
+    default:
+        break;
+    }
+
+    info.prepare( client.color );
+}
+
+Popup::~Popup()
+{}
 
 void Popup::update()
 {
@@ -984,156 +1295,208 @@ void Popup::update()
     }
 }
 
-
-class ContextMenu::Implementation
+static void storageCapacity( ContextMenu::Parameters& parameters, size_t &index )
 {
-public:
-    Parameters& parameters;
-    ATOM windowClass;
-    WNDCLASSW wc;
-    HWND menu;
+    ++index;
 
-    std::vector<std::tuple<int, std::function<void()>>> instances;
-    std::vector<HMENU> menus;
-
-    Implementation( WNDPROC windowProc, Parameters& p ) : parameters( p )
+    for( auto& p : parameters )
     {
-        memset( &wc, 0, sizeof( wc ) );
-        wc.lpfnWndProc = windowProc;
-        wc.hInstance = GetModuleHandleW( nullptr );
-        wc.lpszClassName = L"DropDownMenuHolder";
-        wc.hCursor = LoadCursorW( nullptr, IDC_ARROW );
-        windowClass = RegisterClassW( &wc );
-        menu = nullptr;
-    }
+        if( p.name.empty() )
+            continue;
 
-    ~Implementation()
-    {
-        if( windowClass )
-            UnregisterClassW( wc.lpszClassName, GetModuleHandleW( nullptr ) );
+        if( p.active && !p.parameters.empty() )
+            storageCapacity( p.parameters, index );
     }
-};
+}
 
-static HMENU dropDown( ContextMenu::Implementation& impl, const ContextMenu::Parameters& parameters )
+static void sidedrop( ContextMenu& root, ContextMenu::Parameters& parameters, int& x, int& y, size_t &index, GraphicInterface::ActiveTrigger *last )
 {
-    static int index = 1001;
+    using namespace GraphicInterface;
 
-    if( parameters.empty() )
-        return nullptr;
+    auto& result = root.storage.emplace_back();
+    ++index;
 
-    HMENU popupMenu = CreatePopupMenu(), subMenu;
+    int width = 256, maxX = x, maxY = y;
+
+    auto trigger = std::make_shared<ActiveTrigger>();
+    auto current = trigger.get();
+    trigger->x = x - 1;
+    trigger->y = y;
+    trigger->activateByHovering = true;
+    trigger->use = [&root, id = index - 1, last]( bool inside )
+    {
+        if( !inside )
+        {
+            if( last && last->hovered )
+            {
+                for( size_t i = id; i < root.storage.size(); ++i )
+                {
+                    for( auto& item : root.storage[i] )
+                        item->w = 0;
+                }
+            }
+            else
+            {
+                root.closeButton.use( true );
+            }
+        }
+    };
+
     for( auto& p : parameters )
     {
         if( p.name.empty() )
         {
-            AppendMenuW( popupMenu, MF_SEPARATOR, 0, nullptr );
+            auto separator = std::make_shared<GraphicInterface::Rectangle>();
+            separator->x = x;
+            separator->y = y;
+            separator->w = width;
+            separator->h = 1;
+            separator->color = makeColor( 50, 50, 50, 255 );
+
+            y += separator->h;
+            result.push_back( separator );
             continue;
         }
 
-        if( p.active && ( subMenu = dropDown( impl, p.parameters ) ) )
+        auto button = std::make_shared<TextButton>();
+        button->x = x;
+        button->y = y;
+        button->w = width;
+        button->h = 16;
+        button->centerX = false;
+        button->desc = p.name;
+        button->off = !p.active;
+
+        if( p.parameters.empty() && p.callback )
         {
-            AppendMenuW( popupMenu, MF_POPUP, ( UINT_PTR )subMenu, p.name.c_str() );
-            continue;
+            button->use = [callback = p.callback]( bool release )
+            {
+                if( release )
+                    callback();
+            };
         }
 
-        AppendMenuW( popupMenu, p.active ? MF_STRING : MF_GRAYED, ( UINT_PTR )index, p.name.c_str() );
-        impl.instances.emplace_back( index, p.callback );
-        ++index;
+        if( p.active && !p.parameters.empty() )
+        {
+            size_t drop = index;
+
+            int nextX = x + width + 1, nextY = y;
+            sidedrop( root, p.parameters, nextX, nextY, index, current );
+
+            auto& items = root.storage[drop];
+            auto next = dynamic_cast<ActiveTrigger*>( items.back().get() );
+
+            if( maxX < nextX )
+                maxX = nextX;
+
+            if( maxY < nextY )
+                maxY = nextY;
+
+            // Sub-menu
+            button->activateByHovering = true;
+            button->use = [current, next, width, &items]( bool inside )
+            {
+                if( inside )
+                {
+                    for( auto& item : items )
+                        item->w = width;
+                    items.back()->w += 1;
+                }
+                else if( !next->hovered )
+                {
+                    for( auto& item : items )
+                        item->w = 0;
+                }
+                else
+                {
+                    current->wasHovered = false;
+                }
+            };
+
+            for( auto& item : items )
+                item->w = 0;
+        }
+
+        button->off = button->off && button->use;
+
+        y += button->h;
+        result.push_back( button );
     }
 
-    impl.menus.emplace_back( popupMenu );
-    return popupMenu;
+    trigger->w = width + 1;
+    trigger->h = y - trigger->y;
+    result.push_back( trigger );
+
+    if( x < maxX )
+        x = maxX;
+
+    if( y < maxY )
+        y = maxY;
 }
 
 ContextMenu::ContextMenu( Parameters p ) : parameters( std::move( p ) )
 {
-    auto windowProc = []( HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam ) -> LRESULT
+    int x = 0, y = 0;
+    size_t index = 0;
+
+    storageCapacity( parameters, index );
+    storage.reserve( index );
+
+    index = 0;
+    sidedrop( *this, parameters, x, y, index, nullptr );
+
+    for( auto i = storage.rbegin(); i != storage.rend(); ++i )
     {
-        auto impl = ( Implementation * )GetWindowLongPtr( hwnd, GWLP_USERDATA );
-
-        switch( message )
+        auto& items = *i;
+        for( auto& item : items )
         {
-        case WM_CREATE:
-            {
-                impl = ( Implementation * )( ( LPCREATESTRUCT )lParam )->lpCreateParams;
-                SetWindowLongPtr( hwnd, GWLP_USERDATA, ( LONG_PTR )impl );
-                dropDown( *impl, impl->parameters );
-                return 0;
-            }
-        case WM_APP_SHOWMENU:
-            {
-                if( impl->menus.empty() )
-                    break;
-
-                POINT pt;
-                if( lParam == -1 ) GetCursorPos( &pt );
-                else
-                {
-                    pt.x = LOWORD( lParam );
-                    pt.y = HIWORD( lParam );
-                }
-
-                ShowWindow( hwnd, SW_SHOWNOACTIVATE );
-                SetWindowPos( hwnd, HWND_TOPMOST, pt.x, pt.y, 0, 0, SWP_NOSIZE | SWP_NOACTIVATE );
-                SetForegroundWindow( hwnd );
-
-                auto tracked = TrackPopupMenuEx( impl->menus.back(), TPM_RIGHTBUTTON | TPM_TOPALIGN | TPM_LEFTALIGN | TPM_RETURNCMD, pt.x, pt.y, hwnd, nullptr );
-                for( auto& [index, callback] : impl->instances )
-                {
-                    if( callback && tracked == index )
-                        callback();
-                }
-                return 0;
-            }
-        case WM_EXITMENULOOP:
-            {
-                DestroyWindow( hwnd );
-                return 0;
-            }
-        case WM_DESTROY:
-            for( auto menu : impl->menus )
-            {
-                DestroyMenu( menu );
-            }
-            impl->menus.clear();
-            impl->menu = nullptr;
-            impl = nullptr;
-            // PostQuitMessage( 0 );
-            return 0;
-        default:
-            break;
+            add( item.get() );
         }
-        return DefWindowProcW( hwnd, message, wParam, lParam );
-    };
-
-    implementation = new Implementation( windowProc, parameters );
+    }
 }
+
+ContextMenu::ContextMenu( const ContextMenu& other ) : ContextMenu( other.parameters )
+{}
 
 ContextMenu::~ContextMenu()
-{
-    delete implementation;
-}
+{}
+
+void ContextMenu::update()
+{}
 
 void ContextMenu::run()
 {
-    POINT point;
-    GetCursorPos( &point );
+    if( storage.empty() )
+        return;
 
-    auto menu = implementation->menu = CreateWindowExW( WS_EX_TOOLWINDOW | WS_EX_TOPMOST, implementation->wc.lpszClassName, L"",
-                                       WS_POPUP | WS_VISIBLE, CW_USEDEFAULT, CW_USEDEFAULT, 8, 8, nullptr, nullptr, implementation->wc.hInstance, implementation );
-    makeException( menu );
+    if( storage[0].empty() )
+        return;
 
-    LPARAM l = MAKELPARAM( point.x, point.y );
-    PostMessageW( menu, WM_APP_SHOWMENU, 0, l );
+    self.x = 0;
+    self.y = 0;
+    self.w = GetSystemMetrics( SM_CXSCREEN );
+    self.h = GetSystemMetrics( SM_CYSCREEN );
 
-    MSG msg;
-    BOOL result;
-    while( implementation->menu && ( result = GetMessage( &msg, nullptr, 0, 0 ) ) != 0 )
+    client.place( self );
+    client.color = GraphicInterface::makeColor( 0, 0, 0, 1 );
+
+    POINT p;
+    if( !GetCursorPos( &p ) )
+        return;
+
+    int x = p.x - storage[0][0]->x;
+    int y = p.y - storage[0][0]->y;
+
+    for( auto & items : storage )
     {
-        makeException( result != -1 );
-        TranslateMessage( &msg );
-        DispatchMessage( &msg );
+        for( auto& item : items )
+        {
+            item->x += x;
+            item->y += y;
+        }
     }
+
+    Window::run();
 }
 
 FileManager::FileManager( bool write )
@@ -1142,68 +1505,78 @@ FileManager::FileManager( bool write )
     confirm.desc = write ? L"Save" : L"Open";
     if( write )
     {
-        confirm.use = [this]()
+        confirm.use = [this]( bool release )
         {
+            if( !release )
+                return;
+
             std::filesystem::path candidate = file.value;
             if( std::filesystem::exists( candidate ) )
             {
                 if( std::filesystem::is_regular_file( candidate ) )
                 {
-                    Popup q( Popup::Type::Question, confirm.desc + L" file", L"File already exists, do you want to overwrite it?" );
-                    q.run();
-                    if( q.answer && *q.answer )
+                    Popup question( Popup::Type::Question, confirm.desc + L" file", L"File already exists, do you want to overwrite it?" );
+                    question.run();
+                    if( question.answer && *question.answer )
                     {
                         choice = candidate;
-                        closeButton.use();
+                        closeButton.use( true );
                     }
                 }
                 else
                 {
-                    Popup w( Popup::Type::Warning, confirm.desc + L" file", L"It's not a file." );
-                    w.run();
+                    Popup warning( Popup::Type::Warning, confirm.desc + L" file", L"It's not a file." );
+                    warning.run();
                 }
             }
             else
             {
                 choice = candidate;
-                closeButton.use();
+                closeButton.use( true );
             }
         };
     }
     else
     {
-        confirm.use = [this]()
+        confirm.use = [this]( bool release )
         {
+            if( !release )
+                return;
+
             std::filesystem::path candidate = file.value;
             if( std::filesystem::exists( candidate ) && std::filesystem::is_regular_file( candidate ) )
             {
                 choice = candidate;
-                closeButton.use();
+                closeButton.use( true );
             }
             else
             {
-                Popup w( Popup::Type::Warning, confirm.desc + L" file", L"File with such path does not exist." );
-                w.run();
+                Popup warning( Popup::Type::Warning, confirm.desc + L" file", L"File with such path does not exist." );
+                warning.run();
             }
         };
     }
 
     add( &reject );
     reject.desc = L"Cancel";
-    reject.use = [this]()
+    reject.use = [this]( bool release )
     {
-        closeButton.use();
+        closeButton.use( release );
     };
 
+    self.w = 512;
+    self.h = 1024;
+    root = L"C:\\Users\\User\\Downloads";
+
     add( &file );
-    file.value = L"file";
+    file.value = root->wstring();
     file.prepare();
 
-    w = 512;
-    h = 1024;
-    root = L"C:\\Users\\User\\Downloads";
     select();
 }
+
+FileManager::~FileManager()
+{}
 
 void FileManager::select()
 {
@@ -1227,16 +1600,24 @@ void FileManager::select()
 
         if( std::filesystem::is_directory( path ) )
         {
-            button->use = [this, p = path.lexically_normal()]()
+            button->use = [this, p = path.lexically_normal()]( bool release )
             {
+                if( !release )
+                    return;
+
                 root = p;
+                file.value = p.wstring();
+                file.prepare();
             };
         }
         else if( std::filesystem::is_regular_file( path ) )
         {
-            button->use = [this, p = path.lexically_normal()]()
+            button->use = [this, p = path.lexically_normal()]( bool release )
             {
-                file.value = p;
+                if( !release )
+                    return;
+
+                file.value = p.wstring();
                 file.prepare( true );
             };
         }
@@ -1322,14 +1703,14 @@ void FileManager::update()
     }
 }
 
-std::optional<std::filesystem::path> SavePath()
+std::optional<std::filesystem::path> savePath()
 {
     FileManager fm( true );
     fm.run();
     return fm.choice;
 }
 
-std::optional<std::filesystem::path> OpenPath()
+std::optional<std::filesystem::path> openPath()
 {
     FileManager fm( false );
     fm.run();
@@ -1341,20 +1722,14 @@ static void updateWindowContent( GraphicInterface::Window &desc, HWND hwnd )
     RECT rect;
     GetWindowRect( hwnd, &rect );
 
-    auto oldX = desc.x;
-    auto oldY = desc.y;
-
-    desc.x = 0;
-    desc.y = 0;
-    desc.w = rect.right - rect.left;
-    desc.h = rect.bottom - rect.top;
-    desc.update();
+    auto width = rect.right - rect.left;
+    auto height = rect.bottom - rect.top;
 
     BITMAPINFO bmi;
     clear( &bmi, sizeof( bmi ) );
     bmi.bmiHeader.biSize        = sizeof( BITMAPINFOHEADER );
-    bmi.bmiHeader.biWidth       = desc.w;
-    bmi.bmiHeader.biHeight      = -desc.h;
+    bmi.bmiHeader.biWidth       = width;
+    bmi.bmiHeader.biHeight      = -height;
     bmi.bmiHeader.biPlanes      = 1;
     bmi.bmiHeader.biBitCount    = 32;
     bmi.bmiHeader.biCompression = BI_RGB;
@@ -1371,8 +1746,17 @@ static void updateWindowContent( GraphicInterface::Window &desc, HWND hwnd )
     }
     HBITMAP hOldBmp = ( HBITMAP )SelectObject( hdcMem, hBitmap );
 
+    auto oldX = desc.self.x;
+    auto oldY = desc.self.y;
+
+    desc.self.x = 0;
+    desc.self.y = 0;
+    desc.self.w = width;
+    desc.self.h = height;
+    desc.update();
+
     auto *pixels = ( uint32_t * )pBits;
-    desc.draw( pixels, desc.w, desc.h );
+    desc.draw( pixels, width, height );
 
     BLENDFUNCTION blend;
     clear( &blend, sizeof( blend ) );
@@ -1380,7 +1764,7 @@ static void updateWindowContent( GraphicInterface::Window &desc, HWND hwnd )
     blend.SourceConstantAlpha = 255; // Use per-pixel alpha.
     blend.AlphaFormat = AC_SRC_ALPHA;
     POINT ptZero = {0, 0};
-    SIZE sizeWindow = {desc.w, desc.h};
+    SIZE sizeWindow = {width, height};
     UpdateLayeredWindow( hwnd, hdcScreen, nullptr, &sizeWindow, hdcMem, &ptZero, 0, &blend, ULW_ALPHA );
 
     SelectObject( hdcMem, hOldBmp );
@@ -1388,8 +1772,8 @@ static void updateWindowContent( GraphicInterface::Window &desc, HWND hwnd )
     DeleteDC( hdcMem );
     ReleaseDC( nullptr, hdcScreen );
 
-    desc.x = oldX;
-    desc.y = oldY;
+    desc.self.x = oldX;
+    desc.self.y = oldY;
 }
 
 ChangedValue<bool> &GenericWindow::Keys::letter( char symbol )
@@ -1511,18 +1895,6 @@ GenericWindow::GenericWindow( GraphicInterface::Window &d, HandleMsg h )
             y = point.y - rect.top;
         };
 
-        auto focus = [impl]( GraphicInterface::Active * active, bool refocus )
-        {
-            if( !refocus )
-                return;
-
-            auto& target = impl->window->desc.focus;
-            if( target )
-                target->focus( false );
-            target = active;
-            target->focus( true );
-        };
-
         auto handle = [&]()
         {
             if( !impl || !impl->window )
@@ -1600,10 +1972,10 @@ GenericWindow::GenericWindow( GraphicInterface::Window &d, HandleMsg h )
                 int x = LOWORD( lParam ) - rect.left;
                 int y = HIWORD( lParam ) - rect.top;
 
-                bool left   = impl->window->desc.leftTrigger.inside( x, y );
-                bool right  = impl->window->desc.rightTrigger.inside( x, y );
-                bool top    = impl->window->desc.topTrigger.inside( x, y );
-                bool bottom = impl->window->desc.bottomTrigger.inside( x, y );
+                bool left   = impl->window->desc.leftTrigger.contains( x, y );
+                bool right  = impl->window->desc.rightTrigger.contains( x, y );
+                bool top    = impl->window->desc.topTrigger.contains( x, y );
+                bool bottom = impl->window->desc.bottomTrigger.contains( x, y );
 
                 if( top && left ) return HTTOPLEFT;
                 if( top && right ) return HTTOPRIGHT;
@@ -1617,11 +1989,11 @@ GenericWindow::GenericWindow( GraphicInterface::Window &d, HandleMsg h )
 
                 for( auto active : impl->window->desc.interactive )
                 {
-                    if( active->inside( x, y ) )
+                    if( active->contains( x, y ) )
                         return HTCLIENT;
                 }
 
-                if( impl->window->desc.titleBar.inside( x, y ) )
+                if( impl->window->desc.titleBar.contains( x, y ) )
                     return HTCAPTION;
 
                 return HTCLIENT;
@@ -1658,8 +2030,8 @@ GenericWindow::GenericWindow( GraphicInterface::Window &d, HandleMsg h )
             {
                 RECT rect;
                 GetWindowRect( hwnd, &rect );
-                impl->window->desc.x = rect.left;
-                impl->window->desc.y = rect.top;
+                impl->window->desc.self.x = rect.left;
+                impl->window->desc.self.y = rect.top;
                 break;
             }
         case WM_PAINT:
@@ -1670,10 +2042,9 @@ GenericWindow::GenericWindow( GraphicInterface::Window &d, HandleMsg h )
                 int x, y;
                 getPos( x, y );
 
-                for( auto& active : impl->window->desc.interactive )
-                    focus( active, active->hover( x, y ) );
+                impl->window->desc.hover( x, y );
 
-                if( impl->window->desc.content.inside( x, y ) )
+                if( impl->window->desc.content.contains( x, y ) )
                 {
                     impl->window->inputData.mouseX = x - impl->window->desc.content.x;
                     impl->window->inputData.mouseY = y - impl->window->desc.content.y;
@@ -1688,18 +2059,9 @@ GenericWindow::GenericWindow( GraphicInterface::Window &d, HandleMsg h )
                 int x, y;
                 getPos( x, y );
 
-                auto& list = impl->window->desc.interactive;
-                for( auto i = list.rbegin(); i != list.rend(); ++i )
-                {
-                    auto& active = * i;
-                    if( active->inside( x, y ) )
-                    {
-                        focus( active, active->click( false, x, y ) );
-                        break;
-                    }
-                }
+                impl->window->desc.click( false, x, y );
 
-                if( impl->window->desc.content.inside( x, y ) )
+                if( impl->window->desc.content.contains( x, y ) )
                 {
                     impl->window->inputData.leftMouse = true;
                     handle();
@@ -1713,18 +2075,9 @@ GenericWindow::GenericWindow( GraphicInterface::Window &d, HandleMsg h )
                 int x, y;
                 getPos( x, y );
 
-                auto& list = impl->window->desc.interactive;
-                for( auto i = list.rbegin(); i != list.rend(); ++i )
-                {
-                    auto& active = * i;
-                    if( active->inside( x, y ) )
-                    {
-                        focus( active, active->click( true, x, y ) );
-                        break;
-                    }
-                }
+                impl->window->desc.click( true, x, y );
 
-                if( impl->window->desc.content.inside( x, y ) )
+                if( impl->window->desc.content.contains( x, y ) )
                 {
                     impl->window->inputData.leftMouse = false;
                     handle();
@@ -1737,7 +2090,7 @@ GenericWindow::GenericWindow( GraphicInterface::Window &d, HandleMsg h )
             {
                 int x, y;
                 getPos( x, y );
-                if( impl->window->desc.content.inside( x, y ) )
+                if( impl->window->desc.content.contains( x, y ) )
                 {
                     impl->window->inputData.rightMouse = true;
                     handle();
@@ -1748,7 +2101,7 @@ GenericWindow::GenericWindow( GraphicInterface::Window &d, HandleMsg h )
             {
                 int x, y;
                 getPos( x, y );
-                if( impl->window->desc.content.inside( x, y ) )
+                if( impl->window->desc.content.contains( x, y ) )
                 {
                     impl->window->inputData.rightMouse = false;
                     handle();
@@ -1759,7 +2112,7 @@ GenericWindow::GenericWindow( GraphicInterface::Window &d, HandleMsg h )
             {
                 int x, y;
                 getPos( x, y );
-                if( impl->window->desc.content.inside( x, y ) )
+                if( impl->window->desc.content.contains( x, y ) )
                 {
                     impl->window->inputData.middleMouse = true;
                     handle();
@@ -1770,7 +2123,7 @@ GenericWindow::GenericWindow( GraphicInterface::Window &d, HandleMsg h )
             {
                 int x, y;
                 getPos( x, y );
-                if( impl->window->desc.content.inside( x, y ) )
+                if( impl->window->desc.content.contains( x, y ) )
                 {
                     impl->window->inputData.middleMouse = false;
                     handle();
@@ -1779,25 +2132,17 @@ GenericWindow::GenericWindow( GraphicInterface::Window &d, HandleMsg h )
             return 0;
         case WM_CHAR:
             {
-                auto textInput = [&]( wchar_t c )
-                {
-                    auto target = impl->window->desc.focus;
-                    if( target )
-                    {
-                        target->input( c );
-                        updateWindowContent( impl->window->desc, hwnd );
-                    }
-                };
-
                 if( wParam == '-' || wParam == '+' || wParam == '.' || wParam == '_' || wParam == '\b' )
                 {
-                    textInput( wParam );
+                    impl->window->desc.input( wParam );
+                    updateWindowContent( impl->window->desc, hwnd );
                     return 0;
                 }
 
                 if( ( '0' <= wParam && wParam <= '9' ) || ( 'a' <= wParam && wParam <= 'z' ) || ( 'A' <= wParam && wParam <= 'Z' ) )
                 {
-                    textInput( wParam );
+                    impl->window->desc.input( wParam );
+                    updateWindowContent( impl->window->desc, hwnd );
                     return 0;
                 }
             }
@@ -1937,24 +2282,30 @@ GenericWindow::GenericWindow( GraphicInterface::Window &d, HandleMsg h )
 
     implementation = new Implementation( windowProc, this );
 
-    desc.closeButton.use = [this]()
+    desc.closeButton.use = [this]( bool release )
     {
-        close();
+        if( release )
+            close();
     };
 
-    desc.maximizeButton.use = [this]()
+    desc.maximizeButton.use = [this]( bool release )
     {
-        maximize();
+        if( release )
+            maximize();
     };
 
-    desc.minimizeButton.use = [this]()
+    desc.minimizeButton.use = [this]( bool release )
     {
-        minimize();
+        if( release )
+            minimize();
     };
 }
 
 GenericWindow::~GenericWindow()
 {
+    desc.closeButton.use = nullptr;
+    desc.maximizeButton.use = nullptr;
+    desc.minimizeButton.use = nullptr;
     delete implementation;
 }
 
@@ -1962,7 +2313,7 @@ void GenericWindow::run()
 {
     auto lastWindow = GetForegroundWindow();
 
-    if( desc.x <= 0 || desc.y <= 0 )
+    if( desc.self.x < 0 || desc.self.y < 0 )
     {
         RECT screenRect;
         GetClientRect( GetDesktopWindow(), &screenRect );
@@ -1974,13 +2325,13 @@ void GenericWindow::run()
         int screenHeight = screenRect.bottom - screenRect.top;
         float shiftX = ( screenWidth - width ) * scalar;
         float shiftY = ( screenHeight - height ) * scalar;
-        desc.x = desc.y = Min( shiftX, shiftY );
+        desc.self.x = desc.self.y = Min( shiftX, shiftY );
     }
 
     auto hwnd = implementation->hwnd = CreateWindowExW( WS_EX_LAYERED,
-                                       implementation->className.c_str(), desc.titleOrig.value.c_str(),
+                                       implementation->className.c_str(), desc.title.value.c_str(),
                                        WS_POPUP | WS_THICKFRAME | WS_VISIBLE,
-                                       desc.x, desc.y, desc.w, desc.h,
+                                       desc.self.x, desc.self.y, desc.self.w, desc.self.h,
                                        nullptr, nullptr, GetModuleHandleW( nullptr ), implementation );
     makeException( hwnd );
     updateWindowContent( desc, hwnd );

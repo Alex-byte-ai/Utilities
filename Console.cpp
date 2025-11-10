@@ -1448,7 +1448,7 @@ bool Console::save( const std::optional<std::filesystem::path> &path )
         return true;
     }
 
-    auto userPath = SavePath();
+    auto userPath = savePath();
     if( userPath )
         return save( userPath );
     return false;
