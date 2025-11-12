@@ -86,6 +86,11 @@ double Vector2D::M( const Vector2D &a ) const
     return x * a.y - y * a.x;
 }
 
+Vector2D Vector2D::L() const
+{
+    return Vector2D( -y, x );
+}
+
 double Vector2D::Sqr()const
 {
     return ( *this ) * ( *this );

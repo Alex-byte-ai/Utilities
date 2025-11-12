@@ -32,6 +32,7 @@ public:
     bool operator!=( const Vector2D &a ) const;
 
     double M( const Vector2D &a ) const;
+    Vector2D L() const;
 
     double Sqr() const;
     double Abs() const;

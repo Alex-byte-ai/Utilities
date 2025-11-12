@@ -1202,6 +1202,7 @@ Popup::Popup( Type t, std::wstring tl, std::wstring inf ) : type( t )
         break;
     }
 
+    Window::update();
     info.value = inf;
     info.prepare( client.color );
 
@@ -2132,7 +2133,7 @@ GenericWindow::GenericWindow( GraphicInterface::Window &d, HandleMsg h )
             return 0;
         case WM_CHAR:
             {
-                if( wParam == '-' || wParam == '+' || wParam == '.' || wParam == '_' || wParam == '\b' )
+                if( wParam == '-' || wParam == '/' || wParam == '\\' || wParam == '+' || wParam == '.' || wParam == '_' || wParam == '\b' || wParam == ' ' )
                 {
                     impl->window->desc.input( wParam );
                     updateWindowContent( impl->window->desc, hwnd );
