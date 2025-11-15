@@ -1205,6 +1205,8 @@ Popup::Popup( Type t, std::wstring tl, std::wstring inf ) : type( t )
     Window::update();
     info.value = inf;
     info.prepare( client.color );
+    if( info.w + 16 > self.w )
+        self.w = info.w + 16;
 
     add( &info );
 

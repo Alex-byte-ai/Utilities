@@ -8,7 +8,7 @@ class Scanner
 {
 private:
     std::istream &data;
-    String fileName;
+    Unicode::String fileName;
 
     uint32_t symbol;
 
@@ -54,29 +54,29 @@ public:
 
         long long int n;
         double x;
-        String s;
+        Unicode::String s;
 
         unsigned place, line;
 
         Token( Scanner &scanner );
 
-        String name() const;
-        static String description( TokenType type );
+        Unicode::String name() const;
+        static Unicode::String description( TokenType type );
 
-        void header( String &e ) const;
+        void header( Unicode::String &e ) const;
 
         void error() const;
         void error( TokenType expected ) const;
-        void error( const String &message ) const;
+        void error( const Unicode::String &message ) const;
     };
 
     Token token;
 
-    Scanner( std::istream &data, const String &fileName );
+    Scanner( std::istream &data, const Unicode::String &fileName );
     ~Scanner();
 
     void getToken();
     void getLine();
 
-    String trace();
+    Unicode::String trace();
 };

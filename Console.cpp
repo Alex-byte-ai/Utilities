@@ -1433,7 +1433,7 @@ bool Console::save( const std::optional<std::filesystem::path> &path )
         ( *this )( std::wstring( L"[Console] Saved to " ) + path->native() + L"\n" );
         data->coloring.currentColor = backup;
 
-        String s;
+        Unicode::String s;
         for( const auto &line : data->lines )
         {
             if( !s.Empty() )

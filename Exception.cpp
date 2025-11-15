@@ -7,7 +7,7 @@ const wchar_t *error = L"?";
 
 std::wstring Exception::extract( const char *bytes )
 {
-    String string;
+    Unicode::String string;
     size_t pos = 0;
     std::vector<uint8_t> data;
     data.resize( stringLength( bytes ) );
@@ -25,7 +25,7 @@ std::wstring Exception::extract( const char *bytes )
 
 std::wstring Exception::extract( int number )
 {
-    String string;
+    Unicode::String string;
     string << number;
 
     std::wstring result;

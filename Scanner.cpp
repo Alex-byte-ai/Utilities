@@ -18,7 +18,7 @@ void Scanner::getSymbol()
         fillBuffer();
 
     size_t p = bufferPos;
-    if( String::DecodeUtf8( symbol, buffer, p ) )
+    if( Unicode::String::DecodeUtf8( symbol, buffer, p ) )
     {
         bufferPos = p;
     }
@@ -95,9 +95,9 @@ Scanner::Token::Token( Scanner &scanner_ ): scanner( scanner_ )
     line = 0;
 }
 
-String Scanner::Token::name() const
+Unicode::String Scanner::Token::name() const
 {
-    String result;
+    Unicode::String result;
     if( t == Nil )
         result << L"Nil";
     else if( t == Scanner::Name )
@@ -135,9 +135,9 @@ String Scanner::Token::name() const
     return result;
 }
 
-String Scanner::Token::description( TokenType t )
+Unicode::String Scanner::Token::description( TokenType t )
 {
-    String result;
+    Unicode::String result;
     if( t == Nil )
         result << L"end of file";
     else if( t == Scanner::Name )
@@ -177,7 +177,7 @@ String Scanner::Token::description( TokenType t )
     return result;
 }
 
-void Scanner::Token::header( String &e ) const
+void Scanner::Token::header( Unicode::String &e ) const
 {
     e = L"\n";
     e << L"In file " << scanner.fileName << L"\n";
@@ -187,7 +187,7 @@ void Scanner::Token::header( String &e ) const
 
 void Scanner::Token::error() const
 {
-    String e;
+    Unicode::String e;
     auto make = [&]()
     {
         throw Exception( ( std::wstring )e );
@@ -211,7 +211,7 @@ void Scanner::Token::error( TokenType expected ) const
 {
     error();
 
-    String e;
+    Unicode::String e;
     auto make = [&]()
     {
         throw Exception( ( std::wstring )e );
@@ -236,17 +236,17 @@ void Scanner::Token::error( TokenType expected ) const
     }
 }
 
-void Scanner::Token::error( const String &msg ) const
+void Scanner::Token::error( const Unicode::String &msg ) const
 {
     error();
 
-    String e;
+    Unicode::String e;
     header( e );
     e << msg;
     throw Exception( ( std::wstring )e );
 }
 
-Scanner::Scanner( std::istream &d, const String &f ): data( d ), fileName( f ), token( *this )
+Scanner::Scanner( std::istream &d, const Unicode::String &f ): data( d ), fileName( f ), token( *this )
 {
     if( !data )
     {
@@ -479,7 +479,7 @@ void Scanner::getToken()
         }
         else if( token.s.Length() >= 19 )
         {
-            String bigNumber;
+            Unicode::String bigNumber;
             bigNumber << token.n;
             if( token.s != bigNumber )
                 token.t = Real;
@@ -565,9 +565,9 @@ void Scanner::getLine()
         getSymbol();
 }
 
-String Scanner::trace()
+Unicode::String Scanner::trace()
 {
-    String output;
+    Unicode::String output;
     while( token.t != Nil && token.t != Bad && token.t != NoFile )
     {
         output << token.name() << "\n";

@@ -1109,7 +1109,7 @@ bool Mesh::input( const std::filesystem::path &path, std::filesystem::path *mate
 
 bool Mesh::output( const std::filesystem::path &path, std::filesystem::path *materials ) const
 {
-    String data;
+    Unicode::String data;
 
     if( materials )
         data << materials->wstring() << L"\n";
@@ -1206,7 +1206,7 @@ Mesh::Iterator<const Mesh> Mesh::end() const
     return Iterator<const Mesh>( *this, faces.size() );
 }
 
-static bool getOptions( Scanner &s, Surface::Options &options, String &filePathSufix )
+static bool getOptions( Scanner &s, Surface::Options &options, Unicode::String &filePathSufix )
 {
     auto getBool = [&]( bool & value )
     {
@@ -1473,7 +1473,7 @@ static bool getMap( const std::filesystem::path &root, const wchar_t *name, Scan
 
     map.emplace();
 
-    String string;
+    Unicode::String string;
     if( !getOptions( s, map->options, string ) )
         return false;
 
@@ -1766,7 +1766,7 @@ bool Surface::input( const std::filesystem::path &path )
 
 bool Surface::output( const std::filesystem::path & path ) const
 {
-    String data;
+    Unicode::String data;
 
     for( const auto &matPair : materials )
     {

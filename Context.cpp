@@ -135,7 +135,7 @@ Scope::Scope( Context &c, std::string d )
             continue;
         auto &listArray = context.information( listName ).as<Information::Array>();
 
-        String testName;
+        Unicode::String testName;
         testName << context.Standard();
 
         std::wstring testNameW;

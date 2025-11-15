@@ -7,6 +7,8 @@
 #include "Lambda.h"
 #include "Basic.h"
 
+namespace Unicode
+{
 const std::vector<std::wstring> digits =
 {
     L"0", L"1", L"2", L"3", L"4", L"5", L"6", L"7", L"8", L"9",
@@ -875,6 +877,13 @@ String::operator const std::wstring() const
     return result;
 }
 
+String::operator const std::string() const
+{
+    std::string result;
+    makeException( EncodeA( result ) );
+    return result;
+}
+
 String &String::operator<<( const String &data )
 {
     text.insert( text.end(), data.text.begin(), data.text.end() );
@@ -1092,4 +1101,5 @@ void String::showBase( std::optional<short int> value )
 std::optional<short int> String::showBase()
 {
     return baseBase;
+}
 }

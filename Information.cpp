@@ -542,12 +542,12 @@ bool Item::input( const std::filesystem::path &path )
     return true;
 }
 
-void setItem( ::String& data, const Item & item, const ::String& tab );
-void setObject( ::String& data, const Object & object, const ::String& tab );
-void setArray( ::String& data, const Array & array, const ::String& tab );
-void setString( ::String& data, const String & string );
+void setItem( Unicode::String& data, const Item & item, const Unicode::String& tab );
+void setObject( Unicode::String& data, const Object & object, const Unicode::String& tab );
+void setArray( Unicode::String& data, const Array & array, const Unicode::String& tab );
+void setString( Unicode::String& data, const String & string );
 
-void setItem( ::String& data, const Item & item, const ::String& tab )
+void setItem( Unicode::String& data, const Item & item, const Unicode::String& tab )
 {
     if( item.is<bool>() )
     {
@@ -587,9 +587,9 @@ void setItem( ::String& data, const Item & item, const ::String& tab )
     }
 };
 
-void setObject( ::String& data, const Object & object, const ::String& tab )
+void setObject( Unicode::String& data, const Object & object, const Unicode::String& tab )
 {
-    ::String t;
+    Unicode::String t;
     t << tab << "\t";
 
     unsigned i = 0, size = object.size();
@@ -605,9 +605,9 @@ void setObject( ::String& data, const Object & object, const ::String& tab )
     data << tab << "}";
 };
 
-void setArray( ::String& data, const Array & array, const ::String& tab )
+void setArray( Unicode::String& data, const Array & array, const Unicode::String& tab )
 {
-    ::String t;
+    Unicode::String t;
     t << tab << "\t";
 
     unsigned i = 0, size = array.size();
@@ -624,7 +624,7 @@ void setArray( ::String& data, const Array & array, const ::String& tab )
     data << tab << "]";
 };
 
-void setString( ::String& data, const String & string )
+void setString( Unicode::String& data, const String & string )
 {
     data << "\"";
     for( auto s : ( std::wstring )string )
@@ -653,7 +653,7 @@ bool Item::output( const std::filesystem::path &path ) const
 {
     try
     {
-        ::String data;
+        Unicode::String data;
         setItem( data, *this, "" );
         data << "\n";
 

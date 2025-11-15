@@ -86,7 +86,7 @@ public:
         return buffer.showBase();
     }
 private:
-    String buffer;
+    Unicode::String buffer;
     Console &console;
     std::optional<std::filesystem::path> saveDirectory;
 };

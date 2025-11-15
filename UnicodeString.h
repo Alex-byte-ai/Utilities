@@ -5,6 +5,8 @@
 #include <vector>
 #include <string>
 
+namespace Unicode
+{
 class String
 {
 private:
@@ -111,6 +113,7 @@ public:
     void SubString( unsigned first, unsigned last, String &result ) const;
 
     [[nodiscard]] explicit operator const std::wstring() const;
+    [[nodiscard]] explicit operator const std::string() const;
 
     template<typename T>
     String &operator<<( const T *const data )
@@ -172,3 +175,4 @@ private:
 
     std::vector<uint32_t> text;
 };
+}
