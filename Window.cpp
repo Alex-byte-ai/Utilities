@@ -11,28 +11,42 @@
 #include "Lambda.h"
 #include "Basic.h"
 
-#define WM_APP_SHOWMENU (WM_APP + 1)
-
 namespace GraphicInterface
 {
-static void drawLineR( uint32_t *pixels, int width, int, int x, int y, int size, uint32_t color )
+static void drawLineR( uint32_t *pixels, int width, int height, int x, int y, int size, uint32_t color )
 {
-    while( size > 0 )
-    {
+    if( y < 0 || height <= y )
+        return;
+
+    int x0 = x;
+    int x1 = x + size;
+
+    if( x0 < 0 )
+        x0 = 0;
+
+    if( x1 > width )
+        x1 = width;
+
+    for( x = x0; x < x1; ++x )
         pixels[y * width + x] = color;
-        ++x;
-        --size;
-    }
 }
 
-static void drawLineD( uint32_t *pixels, int width, int, int x, int y, int size, uint32_t color )
+static void drawLineD( uint32_t *pixels, int width, int height, int x, int y, int size, uint32_t color )
 {
-    while( size > 0 )
-    {
+    if( x < 0 || width <= x )
+        return;
+
+    int y0 = y;
+    int y1 = y + size;
+
+    if( y0 < 0 )
+        y0 = 0;
+
+    if( y1 > height )
+        y1 = height;
+
+    for( y = y0; y < y1; ++y )
         pixels[y * width + x] = color;
-        ++y;
-        --size;
-    }
 }
 
 static void drawLineRD( uint32_t *pixels, int width, int, int x, int y, int size, uint32_t color )
@@ -58,7 +72,7 @@ static void drawLineRU( uint32_t *pixels, int width, int, int x, int y, int size
 }
 
 static bool renderTextToBuffer(
-    const std::wstring& text, const std::wstring& fontName, uint32_t color, uint32_t background, int padding,
+    const std::wstring& text, const std::wstring& fontName, uint32_t color, int padding,
     int& outWidth, int& outHeight, std::vector<uint32_t>& outBuffer )
 {
     std::vector<std::wstring> lines;
@@ -193,20 +207,15 @@ static bool renderTextToBuffer(
         for( int xx = 0; xx < finalWidth; ++xx )
         {
             size_t idx = yy * finalWidth + xx;
-            uint8_t inB = bytes[idx * 4 + 0];
-            uint8_t inG = bytes[idx * 4 + 1];
-            uint8_t inR = bytes[idx * 4 + 2];
+            uint8_t b = bytes[idx * 4 + 0];
+            uint8_t g = bytes[idx * 4 + 1];
+            uint8_t r = bytes[idx * 4 + 2];
 
             // Derive alpha from luminance (white background, black text)
-            int lum = ( 77 * inR + 150 * inG + 29 * inB ) >> 8;
+            int lum = ( 77 * r + 150 * g + 29 * b ) >> 8;
             uint32_t a = 255 - lum;
 
-            uint32_t outR = ( ( ( color >> 16 ) & 0xFFu ) * a + ( ( background >> 16 ) & 0xFFu ) * ( 255 - a ) ) / 255;
-            uint32_t outG = ( ( ( color >> 8 ) & 0xFFu ) * a + ( ( background >> 8 ) & 0xFFu ) * ( 255 - a ) ) / 255;
-            uint32_t outB = ( ( ( color >> 0 ) & 0xFFu ) * a + ( ( background >> 0 ) & 0xFFu ) * ( 255 - a ) ) / 255;
-
-            a = 255;
-            outBuffer[idx] = makeColor( outR, outG, outB, a );
+            outBuffer[idx] = makeColor( getR( color ), getG( color ), getB( color ), a );
         }
     }
     // copy( outBuffer.data(), bits, pixelCount * 4 );
@@ -225,14 +234,26 @@ static bool renderTextToBuffer(
     return true;
 }
 
-Object::Object()
+Object::Object() : visible( true ), x( 0 ), y( 0 )
 {}
 
-Object::Object( const Object& )
+Object::Object( const Object& other ) : visible( other.visible ), x( other.x ), y( other.y )
 {}
 
 Object::~Object()
 {}
+
+void Object::inner( int& x0, int& y0 ) const
+{
+    x0 -= x;
+    y0 -= y;
+}
+
+void Object::outer( int& dx, int& dy ) const
+{
+    dx += x;
+    dy += y;
+}
 
 Group::Group() : Object()
 {}
@@ -243,20 +264,25 @@ Group::Group( const Group& other ) : Object( other )
 Group::~Group()
 {}
 
-bool Group::contains( int x, int y ) const
+bool Group::contains( int x0, int y0 ) const
 {
+    inner( x0, y0 );
     for( auto object : objects )
     {
-        if( object->contains( x, y ) )
+        if( object->visible && object->contains( x0, y0 ) )
             return true;
     }
     return false;
 }
 
-void Group::draw( uint32_t *pixels, int width, int height ) const
+void Group::draw( uint32_t *pixels, int width, int height, int dx, int dy ) const
 {
+    outer( dx, dy );
     for( auto object : objects )
-        object->draw( pixels, width, height );
+    {
+        if( object->visible )
+            object->draw( pixels, width, height, dx, dy );
+    }
 }
 
 void Group::add( Object *object )
@@ -302,44 +328,62 @@ static bool focusIt( Active *& target, Active * active, bool refocus )
     return true;
 }
 
-bool ActiveGroup::hover( int x, int y )
+bool ActiveGroup::hover( int x0, int y0 )
 {
+    inner( x0, y0 );
+
+    hovered = false;
+
     bool absorbed = false;
     for( auto i = interactive.rbegin(); i != interactive.rend(); ++i )
     {
         auto active = *i;
-        bool contains = !absorbed && active->contains( x, y );
+        bool contains = !absorbed && active->visible && active->contains( x0, y0 );
         active->hovered = contains;
         if( contains )
+        {
+            hovered = true;
             absorbed = false;
+        }
     }
 
     bool needFocus = false;
     for( auto active : interactive )
     {
-        if( focusIt( target, active, active->hover( x, y ) ) )
+        if( focusIt( target, active, active->visible && active->hover( x0, y0 ) ) )
             needFocus = true;
     }
+
+    focus( needFocus );
     return needFocus;
 }
 
-bool ActiveGroup::click( bool release, int x, int y )
+bool ActiveGroup::click( bool release, int x0, int y0 )
 {
+    inner( x0, y0 );
+
     for( auto i = interactive.rbegin(); i != interactive.rend(); ++i )
     {
         auto& active = * i;
-        if( active->contains( x, y ) )
+        if( active->visible && active->contains( x0, y0 ) )
         {
-            if( focusIt( target, active, active->click( release, x, y ) ) )
+            if( focusIt( target, active, active->click( release, x0, y0 ) ) )
+            {
+                focus( true );
                 return true;
+            }
         }
     }
+
+    focus( false );
     return false;
 }
 
 bool ActiveGroup::input( wchar_t c )
 {
-    return target && target->input( c );
+    bool result = target && target->input( c );
+    focus( result );
+    return result;
 }
 
 void ActiveGroup::focus( bool )
@@ -360,7 +404,19 @@ void ActiveGroup::remove( Object *object )
         interactive.erase( i );
 }
 
-Box::Box() : Object(), x( 0 ), y( 0 ), w( 0 ), h( 0 )
+bool ActiveGroup::activeContains( int x0, int y0 ) const
+{
+    inner( x0, y0 );
+
+    for( auto active : interactive )
+    {
+        if( active->visible && active->contains( x0, y0 ) )
+            return true;
+    }
+    return false;
+}
+
+Box::Box() : Object(), w( 0 ), h( 0 )
 {}
 
 Box::Box( const Box& other ) : Object( other )
@@ -371,7 +427,8 @@ Box::~Box()
 
 bool Box::contains( int x0, int y0 ) const
 {
-    return x <= x0 && x0 < x + w && y <= y0 && y0 < y + h;
+    inner( x0, y0 );
+    return 0 <= x0 && x0 < w && 0 <= y0 && y0 < h;
 }
 
 Box& Box::place( const Box& other )
@@ -383,7 +440,7 @@ Box& Box::place( const Box& other )
     return *this;
 }
 
-void Box::fill( uint32_t *pixels, int width, int height, uint32_t c ) const
+static void fill( uint32_t *pixels, int width, int height, uint32_t c, int w, int h, int x, int y )
 {
     int x0 = x;
     int y0 = y;
@@ -409,7 +466,7 @@ void Box::fill( uint32_t *pixels, int width, int height, uint32_t c ) const
     }
 }
 
-void Box::gradient( uint32_t *pixels, int width, int height ) const
+static void gradient( uint32_t *pixels, int width, int height, int w, int h, int x, int y )
 {
     int x0 = x;
     int y0 = y;
@@ -452,7 +509,7 @@ Trigger::Trigger( const Trigger& other ) : Object( other ), Box( other )
 Trigger::~Trigger()
 {}
 
-void Trigger::draw( uint32_t *, int, int ) const
+void Trigger::draw( uint32_t *, int, int, int, int ) const
 {}
 
 Rectangle::Rectangle() : color( 0 )
@@ -464,21 +521,22 @@ Rectangle::Rectangle( const Rectangle& other ) : Object( other ), Box( other ), 
 Rectangle::~Rectangle()
 {}
 
-void Rectangle::draw( uint32_t *pixels, int width, int height ) const
+void Rectangle::draw( uint32_t *pixels, int width, int height, int dx, int dy ) const
 {
-    fill( pixels, width, height, color );
+    outer( dx, dy );
+    fill( pixels, width, height, color, w, h, dx, dy );
 }
 
-Image::Image() : Box(), bufferW( 0 ), bufferH( 0 )
+ImageBase::ImageBase() : Box(), bufferW( 0 ), bufferH( 0 )
 {}
 
-Image::Image( const Image& other ) : Object( other ), Box( other ), pixels( other.pixels ), bufferW( other.bufferW ), bufferH( other.bufferH )
+ImageBase::ImageBase( const ImageBase& other ) : Object( other ), Box( other ), pixels( other.pixels ), bufferW( other.bufferW ), bufferH( other.bufferH )
 {}
 
-Image::~Image()
+ImageBase::~ImageBase()
 {}
 
-void Image::prepare( int stride, int height )
+void ImageBase::prepare( int stride, int height )
 {
     bufferW = w = Abs( stride );
     bufferH = h = height;
@@ -486,9 +544,18 @@ void Image::prepare( int stride, int height )
     pixels.resize( w * h );
 }
 
+Image::Image() : ImageBase()
+{}
+
+Image::Image( const Image& other ) : Object( other ), ImageBase( other )
+{}
+
+Image::~Image()
+{}
+
 void Image::prepare( const void *data, int stride, int height )
 {
-    prepare( stride, height );
+    ImageBase::prepare( stride, height );
 
     auto output = ( RGBQUAD * )pixels.data();
     auto input = ( const RGBQUAD * )data;
@@ -512,12 +579,16 @@ void Image::prepare( const void *data, int stride, int height )
     }
 }
 
-void Image::draw( uint32_t *otherPixels, int width, int height ) const
+void Image::draw( uint32_t *otherPixels, int width, int height, int dx, int dy ) const
 {
-    int x0 = x;
-    int y0 = y;
-    int x1 = x + Min( w, bufferW );
-    int y1 = y + Min( h, bufferH );
+    outer( dx, dy );
+
+    int x0 = dx;
+    int y0 = dy;
+    int x1 = x0 + Min( w, bufferW );
+    int y1 = y0 + Min( h, bufferH );
+
+    int bx0 = x0;
 
     if( x0 < 0 )
         x0 = 0;
@@ -529,7 +600,7 @@ void Image::draw( uint32_t *otherPixels, int width, int height ) const
     if( y1 > height )
         y1 = height;
 
-    int bx0 = x0 - x;
+    bx0 = x0 - bx0;
 
     int lineW = x1 - x0;
     if( lineW <= 0 )
@@ -544,31 +615,109 @@ void Image::draw( uint32_t *otherPixels, int width, int height ) const
     }
 }
 
-StaticText::StaticText() : Image()
+ImageBlend::ImageBlend() : ImageBase()
+{}
+
+ImageBlend::ImageBlend( const ImageBlend& other ) : Object( other ), ImageBase( other )
+{}
+
+ImageBlend::~ImageBlend()
+{}
+
+void ImageBlend::prepare( const void *data, int stride, int height )
+{
+    ImageBase::prepare( stride, height );
+
+    auto output = ( RGBQUAD * )pixels.data();
+    auto input = ( const RGBQUAD * )data;
+
+    while( height > 0 )
+    {
+        for( int j = 0; j < w; ++j )
+        {
+            auto &o = *( output + j );
+            auto &i = *( input + j );
+            o.rgbBlue = i.rgbBlue * i.rgbReserved / 255;
+            o.rgbGreen = i.rgbGreen * i.rgbReserved / 255;
+            o.rgbRed = i.rgbRed * i.rgbReserved / 255;
+            o.rgbReserved = i.rgbReserved;
+        }
+        output += bufferW;
+        input += stride;
+        --height;
+    }
+}
+
+void ImageBlend::draw( uint32_t *otherPixels, int width, int height, int dx, int dy ) const
+{
+    outer( dx, dy );
+
+    int x0 = dx;
+    int y0 = dy;
+    int x1 = x0 + Min( w, bufferW );
+    int y1 = y0 + Min( h, bufferH );
+
+    if( x0 < 0 )
+        x0 = 0;
+    if( y0 < 0 )
+        y0 = 0;
+
+    if( x1 > width )
+        x1 = width;
+    if( y1 > height )
+        y1 = height;
+
+    for( int j = y0; j < y1; ++j )
+    {
+        for( int i = x0; i < x1; ++i )
+        {
+            auto& result = otherPixels[j * width + i];
+            auto& sample = pixels[( j - dy ) * bufferW + ( i - dx )];
+
+            auto r = getR( result );
+            auto g = getG( result );
+            auto b = getB( result );
+            auto a = getA( result );
+
+            auto sr = getR( sample );
+            auto sg = getG( sample );
+            auto sb = getB( sample );
+            auto sa = getA( sample );
+
+            r = r * ( 255 - sa ) / 255 + sr;
+            g = g * ( 255 - sa ) / 255 + sg;
+            b = b * ( 255 - sa ) / 255 + sb;
+            a = a * ( 255 - sa ) / 255 + sa;
+
+            result = makeColor( r, g, b, a );
+        }
+    }
+}
+
+StaticText::StaticText() : ImageBlend()
 {
     color = makeColor( 0, 0, 0, 255 );
 }
 
-StaticText::StaticText( const StaticText& other ) : Object( other ), Image( other ), color( other.color ), value( other.value )
+StaticText::StaticText( const StaticText& other ) : Object( other ), ImageBlend( other ), color( other.color ), value( other.value )
 {}
 
 StaticText::~StaticText()
 {}
 
-void StaticText::prepare( uint32_t background )
+void StaticText::prepare()
 {
-    w = 0;
-    h = 0;
-    if( renderTextToBuffer( value, L"DejaVuSansMono", color, background, 0, bufferW, bufferH, pixels ) )
+    std::vector<uint32_t> outBuffer;
+    int outWidth, outHeight;
+
+    if( renderTextToBuffer( value, L"DejaVuSansMono", color, 0, outWidth, outHeight, outBuffer ) )
     {
-        w = bufferW;
-        h = bufferH;
+        ImageBlend::prepare( ( const void* )outBuffer.data(), outWidth, outHeight );
     }
     else
     {
-        pixels.push_back( background );
-        w = bufferW = 1;
-        h = bufferH = 1;
+        bufferW = bufferH = 0;
+        pixels.clear();
     }
 }
 
@@ -583,22 +732,22 @@ DynamicText::~DynamicText()
 
 void DynamicText::prepare( bool write )
 {
+    if( write )
+        valid = setCallback ? setCallback( value ) : true;
+    StaticText::prepare();
+}
+
+void DynamicText::draw( uint32_t *canvas, int width, int height, int dx, int dy ) const
+{
     auto idleColor = makeColor( 255, 255, 255, 255 );
     auto errorColor = makeColor( 255, 127, 127, 255 );
     auto focusColor = makeColor( 255, 255, 127, 255 );
-
-    if( write )
-        valid = setCallback ? setCallback( value ) : false;
-
     auto background = valid ? ( focused ? focusColor : idleColor ) : errorColor;
-    StaticText::prepare( background );
-}
 
-void DynamicText::draw( uint32_t *canvas, int width, int height ) const
-{
-    if( !pixels.empty() )
-        fill( canvas, width, height, pixels[0] );
-    StaticText::draw( canvas, width, height );
+    int x1 = dx, y1 = dy;
+    outer( dx, dy );
+    fill( canvas, width, height, background, w, h, dx, dy );
+    StaticText::draw( canvas, width, height, x1, y1 );
 }
 
 bool DynamicText::hover( int, int )
@@ -661,12 +810,14 @@ size_t Combobox::select( int x0, int y0 )
     return ( y0 - y ) / 16;
 }
 
-void Combobox::draw( uint32_t *pixels, int width, int height ) const
+void Combobox::draw( uint32_t *pixels, int width, int height, int dx, int dy ) const
 {
     auto base = makeColor( 255, 255, 255, 255 );
     auto selection = makeColor( 255, 255, 127, 255 );
     StaticText text;
     Rectangle area;
+
+    outer( dx, dy );
 
     area.w = w;
     area.h = 16;
@@ -674,14 +825,14 @@ void Combobox::draw( uint32_t *pixels, int width, int height ) const
     auto drawItem = [&]( std::wstring o, size_t i, uint32_t c )
     {
         area.color = c;
-        area.x = x;
-        area.y = y + i * 16;
-        area.draw( pixels, width, height );
+        area.x = 0;
+        area.y = i * 16;
+        area.draw( pixels, width, height, dx, dy );
         text.value = std::move( o );
-        text.prepare( c );
+        text.prepare();
         text.x = area.x + ( w - text.w ) * 0.5;
         text.y = area.y + ( 16 - text.h ) * 0.5;
-        text.draw( pixels, width, height );
+        text.draw( pixels, width, height, dx, dy );
     };
 
     if( isOpen )
@@ -765,7 +916,7 @@ ActiveTrigger::ActiveTrigger( const ActiveTrigger& other ) : Object( other ), Bu
 ActiveTrigger::~ActiveTrigger()
 {}
 
-void ActiveTrigger::draw( uint32_t *, int, int ) const
+void ActiveTrigger::draw( uint32_t *, int, int, int, int ) const
 {}
 
 TextButton::TextButton() : Button(), centerX( true ), centerY( true )
@@ -777,29 +928,31 @@ TextButton::TextButton( const TextButton& other ) : Object( other ), Button( oth
 TextButton::~TextButton()
 {}
 
-void TextButton::draw( uint32_t *pixels, int width, int height ) const
+void TextButton::draw( uint32_t *pixels, int width, int height, int dx, int dy ) const
 {
     if( w <= 0 || h <= 0 )
         return;
 
+    outer( dx, dy );
+
     auto color = hovered && !off ? makeColor( 220, 220, 60, 255 ) : makeColor( 200, 200, 200, 255 );
-    fill( pixels, width, height, color );
+    fill( pixels, width, height, color, w, h, dx, dy );
 
     StaticText text;
     text.color = off ? makeColor( 128, 128, 128, 255 ) : makeColor( 0, 0, 0, 255 );
 
     text.value = desc;
-    text.prepare( color );
+    text.prepare();
 
-    text.x = x + ( centerX ? ( w - text.w ) * 0.5 : 16 );
-    text.y = y + ( centerY ? ( h - text.h ) * 0.5 : 16 );
+    text.x = centerX ? ( w - text.w ) * 0.5 : 16;
+    text.y = centerY ? ( h - text.h ) * 0.5 : 16;
 
-    text.draw( pixels, width, height );
+    text.draw( pixels, width, height, dx, dy );
 
     if( activateByHovering )
     {
-        drawLineRD( pixels, width, height, x + w - 16, y + 4, 4, text.color );
-        drawLineRU( pixels, width, height, x + w - 16, y + h - 5, 4, text.color );
+        drawLineRD( pixels, width, height, dx + w - 16, dy + 4, 4, text.color );
+        drawLineRU( pixels, width, height, dx + w - 16, dy + h - 5, 4, text.color );
     }
 }
 
@@ -812,14 +965,16 @@ MinimizeButton::MinimizeButton( const MinimizeButton& other ) : Object( other ),
 MinimizeButton::~MinimizeButton()
 {}
 
-void MinimizeButton::draw( uint32_t *pixels, int width, int height ) const
+void MinimizeButton::draw( uint32_t *pixels, int width, int height, int dx, int dy ) const
 {
+    outer( dx, dy );
+
     auto color = hovered ? makeColor( 235, 235, 235, 255 ) : makeColor( 255, 255, 255, 255 );
-    fill( pixels, width, height, color );
+    fill( pixels, width, height, color, w, h, dx, dy );
 
     auto black = makeColor( 0, 0, 0, 255 );
 
-    drawLineR( pixels, width, height, x + 3, y + h / 2 - 1, w - 6, black );
+    drawLineR( pixels, width, height, dx + 3, dy + h / 2 - 1, w - 6, black );
 }
 
 MaximizeButton::MaximizeButton() : Button()
@@ -831,23 +986,25 @@ MaximizeButton::MaximizeButton( const MaximizeButton& other ) : Object( other ),
 MaximizeButton::~MaximizeButton()
 {}
 
-void MaximizeButton::draw( uint32_t *pixels, int width, int height ) const
+void MaximizeButton::draw( uint32_t *pixels, int width, int height, int dx, int dy ) const
 {
+    outer( dx, dy );
+
     auto color = hovered ? makeColor( 235, 235, 235, 255 ) : makeColor( 255, 255, 255, 255 );
-    fill( pixels, width, height, color );
+    fill( pixels, width, height, color, w, h, dx, dy );
 
     auto black = makeColor( 0, 0, 0, 255 );
     auto half = hovered ? makeColor( 188, 188, 188, 255 ) : makeColor( 204, 204, 204, 255 );
 
-    drawLineR( pixels, width, height, x + 4, y + 4, w - 8, half );
-    drawLineD( pixels, width, height, x + 4, y + 4, w - 8, half );
-    drawLineR( pixels, width, height, x + 4, y + h - 5, w - 8, half );
-    drawLineD( pixels, width, height, x + w - 5, y + 4, w - 8, half );
+    drawLineR( pixels, width, height, dx + 4, dy + 4, w - 8, half );
+    drawLineD( pixels, width, height, dx + 4, dy + 4, w - 8, half );
+    drawLineR( pixels, width, height, dx + 4, dy + h - 5, w - 8, half );
+    drawLineD( pixels, width, height, dx + w - 5, dy + 4, w - 8, half );
 
-    drawLineR( pixels, width, height, x + 3, y + 3, w - 6, black );
-    drawLineD( pixels, width, height, x + 3, y + 3, w - 6, black );
-    drawLineR( pixels, width, height, x + 3, y + h - 4, w - 6, black );
-    drawLineD( pixels, width, height, x + w - 4, y + 3, w - 6, black );
+    drawLineR( pixels, width, height, dx + 3, dy + 3, w - 6, black );
+    drawLineD( pixels, width, height, dx + 3, dy + 3, w - 6, black );
+    drawLineR( pixels, width, height, dx + 3, dy + h - 4, w - 6, black );
+    drawLineD( pixels, width, height, dx + w - 4, dy + 3, w - 6, black );
 }
 
 CloseButton::CloseButton() : Button()
@@ -859,23 +1016,342 @@ CloseButton::CloseButton( const CloseButton& other ) : Object( other ), Button( 
 CloseButton::~CloseButton()
 {}
 
-void CloseButton::draw( uint32_t *pixels, int width, int height ) const
+void CloseButton::draw( uint32_t *pixels, int width, int height, int dx, int dy ) const
 {
+    outer( dx, dy );
+
     auto color = hovered ? makeColor( 245, 10, 10, 255 ) : makeColor( 255, 255, 255, 255 );
-    fill( pixels, width, height, color );
+    fill( pixels, width, height, color, w, h, dx, dy );
 
     auto black = makeColor( 0, 0, 0, 255 );
     auto half = hovered ? makeColor( 196, 8, 8, 255 ) : makeColor( 204, 204, 204, 255 );
 
-    drawLineRD( pixels, width, height, x + 4, y + 3, w - 7, half );
-    drawLineRU( pixels, width, height, x + 4, y + h - 4, w - 7, half );
+    drawLineRD( pixels, width, height, dx + 4, dy + 3, w - 7, half );
+    drawLineRU( pixels, width, height, dx + 4, dy + h - 4, w - 7, half );
 
-    drawLineRD( pixels, width, height, x + 3, y + 4, w - 7, half );
-    drawLineRU( pixels, width, height, x + 3, y + h - 5, w - 7, half );
+    drawLineRD( pixels, width, height, dx + 3, dy + 4, w - 7, half );
+    drawLineRU( pixels, width, height, dx + 3, dy + h - 5, w - 7, half );
 
-    drawLineRD( pixels, width, height, x + 3, y + 3, w - 6, black );
-    drawLineRU( pixels, width, height, x + 3, y + h - 4, w - 6, black );
+    drawLineRD( pixels, width, height, dx + 3, dy + 3, w - 6, black );
+    drawLineRU( pixels, width, height, dx + 3, dy + h - 4, w - 6, black );
 }
+
+PlusButton::PlusButton() : Button(), toggle( false )
+{
+    w = h = 15;
+}
+
+PlusButton::PlusButton( const PlusButton& other ) : Object( other ), Button( other ), desc( other.desc )
+{}
+
+PlusButton::~PlusButton()
+{}
+
+void PlusButton::setDefaultCallback()
+{
+    use = [this]( bool release )
+    {
+        if( release )
+            toggle = !toggle;
+    };
+}
+
+void PlusButton::draw( uint32_t *pixels, int width, int height, int dx, int dy ) const
+{
+    outer( dx, dy );
+
+    auto color = hovered && !off ? makeColor( 220, 220, 60, 255 ) : makeColor( 200, 200, 200, 255 );
+    fill( pixels, width, height, color, w, h, dx, dy );
+
+    StaticText text;
+    text.color = off ? makeColor( 128, 128, 128, 255 ) : makeColor( 0, 0, 0, 255 );
+
+    text.value = desc;
+    text.prepare();
+
+    text.x = w + 9;
+    text.y = ( h - text.h ) * 0.5;
+
+    text.draw( pixels, width, height, dx, dy );
+
+    drawLineR( pixels, width, height, dx + 2, dy + h / 2, w - 4, makeColor( 0, 0, 0, 255 ) );
+    if( !toggle )
+        drawLineD( pixels, width, height, dx + w / 2, dy + 2, h - 4, makeColor( 0, 0, 0, 255 ) );
+}
+
+DropArea::DropArea()
+{}
+
+DropArea::DropArea( const DropArea& other ) : Object( other ), Button( other )
+{}
+
+DropArea::~DropArea()
+{}
+
+void DropArea::draw( uint32_t *pixels, int width, int height, int dx, int dy ) const
+{
+    if( hovered )
+    {
+        outer( dx, dy );
+        fill( pixels, width, height, makeColor( 255, 255, 0, 255 ), w, h, dx, dy );
+    }
+}
+
+static bool isPostfix( const std::vector<size_t>& postfix, const std::vector<size_t>& vector )
+{
+    if( postfix.size() > vector.size() )
+        return false;
+    return std::equal( postfix.begin(), postfix.end(), vector.begin() + ( vector.size() - postfix.size() ) );
+}
+
+Node::Node( ActionData &d, Node *r, bool f ) : data( d ), root( r ), id( -1 )
+{
+    using namespace GraphicInterface;
+
+    add( &space );
+    add( &button );
+    add( &wrapper );
+
+    button.use = [this]( bool release )
+    {
+        auto path = getPath();
+
+        if( release )
+        {
+            if( path == data.path )
+            {
+                data.action = wrapper.visible ? Action::Close : Action::Open;
+            }
+            else
+            {
+                data.action = Action::None;
+            }
+        }
+        else
+        {
+            data.path = std::move( path );
+            data.action = Action::None;
+        }
+    };
+
+    space.x = 0;
+    space.y = -6;
+    space.w = 128;
+    space.h = 4;
+
+    space.use = [this]( bool release )
+    {
+        if( release && data.path )
+        {
+            auto path = getPath();
+            if( !isPostfix( *data.path, path ) )
+            {
+                data.secondary = path;
+                data.action = Action::Move;
+            }
+        }
+        else
+        {
+            data.action = Action::None;
+        }
+    };
+
+    wrapper.visible = button.toggle = f;
+    wrapper.y = wrapper.x = height();
+}
+
+Node::Node( ActionData &d, const Parameter& parameter, Node *r ) : Node( d, r, parameter.open )
+{
+    update( parameter );
+}
+
+Node::~Node()
+{}
+
+void Node::update( const Parameter& parameter )
+{
+    using namespace GraphicInterface;
+
+    for( auto& node : nodes )
+        wrapper.remove( node.get() );
+    nodes.clear();
+
+    button.desc = parameter.name;
+
+    for( auto& param : parameter.parameters )
+    {
+        auto node = std::make_shared<Node>( data, param, this );
+        nodes.push_back( node );
+        wrapper.add( node.get() );
+    }
+
+    auto node = std::make_shared<Node>( data, this, false );
+    nodes.push_back( node );
+    wrapper.add( node.get() );
+    node->button.visible = false;
+
+    reposition();
+    recount();
+}
+
+void Node::open( bool f )
+{
+    wrapper.visible = button.toggle = f;
+    repositionRecursive();
+}
+
+void Node::reposition()
+{
+    int yOffset = 0;
+    for( auto& node : nodes )
+    {
+        node->y = yOffset;
+        yOffset += node->height();
+    }
+}
+
+void Node::repositionRecursive()
+{
+    auto r = this;
+    while( r )
+    {
+        r->reposition();
+        r = r->root;
+    }
+}
+
+void Node::recount()
+{
+    size_t index = 0;
+    for( auto& node : nodes )
+    {
+        node->id = index;
+        ++index;
+    }
+}
+
+int Node::height() const
+{
+    int result = button.visible ? button.h + 9 : 0;
+    if( wrapper.visible )
+    {
+        result += 8;
+        for( auto& node : nodes )
+            result += node->height();
+    }
+    return result;
+}
+
+std::vector<size_t> Node::getPath() const
+{
+    std::vector<size_t> result;
+    const Node *r = this, *next = root;
+    while( next )
+    {
+        result.push_back( r->id );
+        r = next;
+        next = next->root;
+    }
+    return result;
+}
+
+Node *Node::getObject( const std::vector<size_t>& p )
+{
+    Node *result = this;
+    for( auto i = p.rbegin(); i != p.rend(); ++i )
+    {
+        auto index = *i;
+        if( index >= result->nodes.size() )
+            return nullptr;
+
+        result = result->nodes[index].get();
+    }
+    return result;
+}
+
+Node *Node::addNode( std::shared_ptr<Node> node )
+{
+    nodes.push_back( node );
+    wrapper.add( node.get() );
+    node->root = this;
+    recount();
+    repositionRecursive();
+    return node.get();
+}
+
+Node *Node::addNode( std::shared_ptr<Node> node, size_t index )
+{
+    if( index > nodes.size() )
+        return nullptr;
+
+    nodes.insert( nodes.begin() + index, node );
+    wrapper.add( node.get() );
+    node->root = this;
+    recount();
+    repositionRecursive();
+    return node.get();
+}
+
+std::shared_ptr<Node> Node::detach()
+{
+    if( !root )
+        return nullptr;
+
+    auto& rnodes = root->nodes;
+    auto result = rnodes[id];
+
+    rnodes.erase( rnodes.begin() + id );
+    root->wrapper.remove( result.get() );
+    root->recount();
+    root->repositionRecursive();
+    root = nullptr;
+
+    makeException( result.get() == this );
+    return result;
+}
+
+ChangedValue<bool> &Keys::letter( char symbol )
+{
+    makeException( 'A' <= symbol && symbol <= 'Z' );
+    return letters[symbol - 'A'];
+}
+
+const ChangedValue<bool> &Keys::letter( char symbol ) const
+{
+    makeException( 'A' <= symbol && symbol <= 'Z' );
+    return letters[symbol - 'A'];
+}
+
+ChangedValue<bool> &Keys::digit( unsigned short symbol )
+{
+    makeException( 0 <= symbol && symbol <= 9 );
+    return letters[symbol];
+}
+
+const ChangedValue<bool> &Keys::digit( unsigned short symbol ) const
+{
+    makeException( 0 <= symbol && symbol <= 9 );
+    return letters[symbol];
+}
+
+void Keys::reset()
+{
+    for( auto &letter : letters )
+        letter.reset();
+    for( auto &digit : digits )
+        digit.reset();
+}
+
+void Keys::release()
+{
+    for( auto &letter : letters )
+        letter = false;
+    for( auto &digit : digits )
+        digit = false;
+}
+
+OutputData::OutputData( GraphicInterface::Window &desc ) : image( desc.content )
+{}
 
 Window::Window( int th, int sz, int bh, int tgw, int b )
     : titlebarHeight( th ), buttonSize( sz ), buttonSpacingH( bh ), triggerWidth( tgw ), borderWidth( b )
@@ -934,6 +1410,7 @@ Window::Window( const Window &other ) :
     add( &bottomTrigger );
     add( &leftTrigger );
     add( &rightTrigger );
+    add( &mouseTrigger );
 }
 
 Window::~Window()
@@ -1003,7 +1480,7 @@ void Window::update()
     minimizeButton.place( maximizeButton );
     minimizeButton.x -= buttonSpacingH + buttonSize;
 
-    icon.y = borderWidth + ( titlebarHeight - icon.h ) / 2;
+    icon.y = borderWidth + ( icon.h > 0 ? ( titlebarHeight - icon.h ) / 2 : 0 );
     icon.x = icon.y;
 
     title.x = icon.x + icon.w + buttonSpacingV;
@@ -1049,11 +1526,13 @@ void Window::update()
         content.h = 0;
         client.color = makeColor( 170, 170, 170, 255 );
     }
+
+    mouseTrigger.place( content );
 }
 
 void Window::run()
 {
-    GenericWindow g( *this, nullptr );
+    GenericWindow g( *this );
     g.run();
 }
 
@@ -1061,15 +1540,35 @@ uint32_t makeColor( uint8_t r, uint8_t g, uint8_t b, uint8_t a )
 {
     return ( a << 24 ) | ( r << 16 ) | ( g << 8 ) | b;
 }
+
+uint8_t getR( uint32_t color )
+{
+    return ( color >> 16 ) & 0xff;
 }
 
-Settings::Settings( std::wstring tl, const Parameters& p ) : parameters( p )
+uint8_t getG( uint32_t color )
+{
+    return ( color >> 8 ) & 0xff;
+}
+
+uint8_t getB( uint32_t color )
+{
+    return color & 0xff;
+}
+
+uint8_t getA( uint32_t color )
+{
+    return ( color >> 24 ) & 0xff;
+}
+}
+
+Settings::Settings( std::wstring tl, const Parameters& parameters )
 {
     using namespace GraphicInterface;
 
     std::vector<std::shared_ptr<Combobox>> comboboxes;
 
-    auto make = [this, &comboboxes]( Settings::Parameter & value, int position, int width, int height )
+    auto make = [this, &comboboxes]( const Settings::Parameter & value, int position, int width, int height )
     {
         if( value.get )
         {
@@ -1082,7 +1581,7 @@ Settings::Settings( std::wstring tl, const Parameters& p ) : parameters( p )
             object->h = height;
 
             object->value = value.name;
-            object->prepare( client.color );
+            object->prepare();
         }
 
         if( !value.get )
@@ -1139,7 +1638,7 @@ Settings::Settings( std::wstring tl, const Parameters& p ) : parameters( p )
     self.w = 300;
     self.h = 1024;
     title.value = tl;
-    title.prepare( titleBar.color );
+    title.prepare();
     Window::update();
 
     int position = 16 + Window::titleBar.h;
@@ -1157,9 +1656,6 @@ Settings::Settings( std::wstring tl, const Parameters& p ) : parameters( p )
     }
 }
 
-Settings::Settings( const Settings& other ) : Settings( other.title.value, other.parameters )
-{}
-
 Settings::~Settings()
 {}
 
@@ -1170,7 +1666,7 @@ void Settings::update()
     for( auto& field : fields )
     {
         field->w = self.w - 2 * borderWidth - 2 * 16;
-        field->x = self.x + borderWidth + 16;
+        field->x = borderWidth + 16;
     }
 }
 
@@ -1182,7 +1678,7 @@ Popup::Popup( Type t, std::wstring tl, std::wstring inf ) : type( t )
     self.h = 240;
 
     title.value = tl;
-    title.prepare( titleBar.color );
+    title.prepare();
 
     switch( type )
     {
@@ -1204,7 +1700,7 @@ Popup::Popup( Type t, std::wstring tl, std::wstring inf ) : type( t )
 
     Window::update();
     info.value = inf;
-    info.prepare( client.color );
+    info.prepare();
     if( info.w + 16 > self.w )
         self.w = info.w + 16;
 
@@ -1266,7 +1762,7 @@ Popup::Popup( const Popup& other ) : Popup( other.type, other.title.value, other
         break;
     }
 
-    info.prepare( client.color );
+    info.prepare();
 }
 
 Popup::~Popup()
@@ -1298,52 +1794,23 @@ void Popup::update()
     }
 }
 
-static void storageCapacity( ContextMenu::Parameters& parameters, size_t &index )
-{
-    ++index;
-
-    for( auto& p : parameters )
-    {
-        if( p.name.empty() )
-            continue;
-
-        if( p.active && !p.parameters.empty() )
-            storageCapacity( p.parameters, index );
-    }
-}
-
-static void sidedrop( ContextMenu& root, ContextMenu::Parameters& parameters, int& x, int& y, size_t &index, GraphicInterface::ActiveTrigger *last )
+static std::shared_ptr<GraphicInterface::ActiveGroup> sidedrop(
+    ContextMenu& root, const ContextMenu::Parameters& parameters, int& x, int& y, GraphicInterface::ActiveGroup *rootMenu )
 {
     using namespace GraphicInterface;
 
-    auto& result = root.storage.emplace_back();
-    ++index;
-
     int width = 256, maxX = x, maxY = y;
 
+    auto menu = std::make_shared<ActiveGroup>();
+    root.storage.push_back( menu );
+
     auto trigger = std::make_shared<ActiveTrigger>();
-    auto current = trigger.get();
+    root.storage.push_back( trigger );
+    menu->add( trigger.get() );
+
     trigger->x = x - 1;
     trigger->y = y;
     trigger->activateByHovering = true;
-    trigger->use = [&root, id = index - 1, last]( bool inside )
-    {
-        if( !inside )
-        {
-            if( last && last->hovered )
-            {
-                for( size_t i = id; i < root.storage.size(); ++i )
-                {
-                    for( auto& item : root.storage[i] )
-                        item->w = 0;
-                }
-            }
-            else
-            {
-                root.closeButton.use( true );
-            }
-        }
-    };
 
     for( auto& p : parameters )
     {
@@ -1357,7 +1824,8 @@ static void sidedrop( ContextMenu& root, ContextMenu::Parameters& parameters, in
             separator->color = makeColor( 50, 50, 50, 255 );
 
             y += separator->h;
-            result.push_back( separator );
+            root.storage.push_back( separator );
+            menu->add( separator.get() );
             continue;
         }
 
@@ -1372,22 +1840,22 @@ static void sidedrop( ContextMenu& root, ContextMenu::Parameters& parameters, in
 
         if( p.parameters.empty() && p.callback )
         {
-            button->use = [callback = p.callback]( bool release )
+            button->use = [&root, callback = p.callback]( bool release )
             {
                 if( release )
+                {
                     callback();
+                    root.closeButton.use( true );
+                }
             };
         }
 
         if( p.active && !p.parameters.empty() )
         {
-            size_t drop = index;
-
             int nextX = x + width + 1, nextY = y;
-            sidedrop( root, p.parameters, nextX, nextY, index, current );
-
-            auto& items = root.storage[drop];
-            auto next = dynamic_cast<ActiveTrigger*>( items.back().get() );
+            auto subMenu = sidedrop( root, p.parameters, nextX, nextY, menu.get() );
+            menu->add( subMenu.get() );
+            subMenu->visible = false;
 
             if( maxX < nextX )
                 maxX = nextX;
@@ -1397,72 +1865,69 @@ static void sidedrop( ContextMenu& root, ContextMenu::Parameters& parameters, in
 
             // Sub-menu
             button->activateByHovering = true;
-            button->use = [current, next, width, &items]( bool inside )
+            button->use = [next = subMenu.get()]( bool inside )
             {
                 if( inside )
                 {
-                    for( auto& item : items )
-                        item->w = width;
-                    items.back()->w += 1;
+                    next->visible = true;
                 }
                 else if( !next->hovered )
                 {
-                    for( auto& item : items )
-                        item->w = 0;
-                }
-                else
-                {
-                    current->wasHovered = false;
+                    next->visible = false;
                 }
             };
-
-            for( auto& item : items )
-                item->w = 0;
         }
 
         button->off = button->off && button->use;
 
         y += button->h;
-        result.push_back( button );
+        root.storage.push_back( button );
+        menu->add( button.get() );
     }
 
     trigger->w = width + 1;
     trigger->h = y - trigger->y;
-    result.push_back( trigger );
+    trigger->use = [&root, rootMenu, self = menu.get()]( bool inside )
+    {
+        if( inside )
+        {
+            if( rootMenu )
+                rootMenu->visible = true;
+        }
+        else
+        {
+            self->visible = false;
+        }
+    };
 
     if( x < maxX )
         x = maxX;
 
     if( y < maxY )
         y = maxY;
+
+    return menu;
 }
 
-ContextMenu::ContextMenu( Parameters p ) : parameters( std::move( p ) )
+ContextMenu::ContextMenu( const Parameters& parameters )
 {
-    int x = 0, y = 0;
-    size_t index = 0;
-
-    storageCapacity( parameters, index );
-    storage.reserve( index );
-
-    index = 0;
-    sidedrop( *this, parameters, x, y, index, nullptr );
-
-    for( auto i = storage.rbegin(); i != storage.rend(); ++i )
-    {
-        auto& items = *i;
-        for( auto& item : items )
-        {
-            add( item.get() );
-        }
-    }
+    int xOffset = 0, yOffset = 0;
+    add( sidedrop( *this, parameters, xOffset, yOffset, nullptr ).get() );
 }
-
-ContextMenu::ContextMenu( const ContextMenu& other ) : ContextMenu( other.parameters )
-{}
 
 ContextMenu::~ContextMenu()
 {}
+
+bool ContextMenu::hover( int x0, int y0 )
+{
+    auto result = ActiveGroup::hover( x0, y0 );
+    if( !hovered )
+    {
+        closeButton.use( true );
+        return false;
+    }
+    return result;
+}
 
 void ContextMenu::update()
 {}
@@ -1472,11 +1937,6 @@ void ContextMenu::run()
     if( storage.empty() )
         return;
 
-    if( storage[0].empty() )
-        return;
-
-    self.x = 0;
-    self.y = 0;
     self.w = GetSystemMetrics( SM_CXSCREEN );
     self.h = GetSystemMetrics( SM_CYSCREEN );
 
@@ -1487,17 +1947,9 @@ void ContextMenu::run()
     if( !GetCursorPos( &p ) )
         return;
 
-    int x = p.x - storage[0][0]->x;
-    int y = p.y - storage[0][0]->y;
-
-    for( auto & items : storage )
-    {
-        for( auto& item : items )
-        {
-            item->x += x;
-            item->y += y;
-        }
-    }
+    storage[0]->visible = true;
+    storage[0]->x = p.x;
+    storage[0]->y = p.y;
 
     Window::run();
 }
@@ -1720,6 +2172,62 @@ std::optional<std::filesystem::path> openPath()
     return fm.choice;
 }
 
+Hierarchy::Hierarchy( const GraphicInterface::Node::Parameter& p ) : root( data, p )
+{
+    self.w = 256;
+    self.h = 256;
+
+    add( &root );
+    root.space.visible = false;
+}
+
+Hierarchy::~Hierarchy()
+{}
+
+bool Hierarchy::click( bool release, int x0, int y0 )
+{
+    if( !release )
+        return ActiveGroup::click( false, x0, y0 );
+
+    auto result = ActiveGroup::click( true, x0, y0 );
+
+    if( !callback || callback( data ) )
+    {
+        GraphicInterface::Node *primary = nullptr, *secondary = nullptr;
+
+        if( data.path )
+            primary = root.getObject( *data.path );
+
+        if( data.secondary )
+            secondary = root.getObject( *data.secondary );
+
+        if( data.action == GraphicInterface::Node::Action::Move )
+        {
+            auto node = primary->detach();
+            secondary->root->addNode( node, secondary->id );
+        }
+        else if( data.action == GraphicInterface::Node::Action::Open )
+        {
+            primary->open( true );
+        }
+        else if( data.action == GraphicInterface::Node::Action::Close )
+        {
+            primary->open( false );
+        }
+
+        data.action = GraphicInterface::Node::Action::None;
+    }
+
+    return result;
+}
+
+void Hierarchy::update()
+{
+    Window::update();
+    root.x = client.x + 8;
+    root.y = client.y + 8;
+}
+
 static void updateWindowContent( GraphicInterface::Window &desc, HWND hwnd )
 {
     RECT rect;
@@ -1749,17 +2257,12 @@ static void updateWindowContent( GraphicInterface::Window &desc, HWND hwnd )
     }
     HBITMAP hOldBmp = ( HBITMAP )SelectObject( hdcMem, hBitmap );
 
-    auto oldX = desc.self.x;
-    auto oldY = desc.self.y;
-
-    desc.self.x = 0;
-    desc.self.y = 0;
     desc.self.w = width;
     desc.self.h = height;
     desc.update();
 
     auto *pixels = ( uint32_t * )pBits;
-    desc.draw( pixels, width, height );
+    desc.draw( pixels, width, height, -desc.x, -desc.y );
 
     BLENDFUNCTION blend;
     clear( &blend, sizeof( blend ) );
@@ -1774,49 +2277,6 @@ static void updateWindowContent( GraphicInterface::Window &desc, HWND hwnd )
     DeleteObject( hBitmap );
     DeleteDC( hdcMem );
     ReleaseDC( nullptr, hdcScreen );
-
-    desc.self.x = oldX;
-    desc.self.y = oldY;
-}
-
-ChangedValue<bool> &GenericWindow::Keys::letter( char symbol )
-{
-    makeException( 'A' <= symbol && symbol <= 'Z' );
-    return letters[symbol - 'A'];
-}
-
-const ChangedValue<bool> &GenericWindow::Keys::letter( char symbol ) const
-{
-    makeException( 'A' <= symbol && symbol <= 'Z' );
-    return letters[symbol - 'A'];
-}
-
-ChangedValue<bool> &GenericWindow::Keys::digit( unsigned short symbol )
-{
-    makeException( 0 <= symbol && symbol <= 9 );
-    return letters[symbol];
-}
-
-const ChangedValue<bool> &GenericWindow::Keys::digit( unsigned short symbol ) const
-{
-    makeException( 0 <= symbol && symbol <= 9 );
-    return letters[symbol];
-}
-
-void GenericWindow::Keys::reset()
-{
-    for( auto &letter : letters )
-        letter.reset();
-    for( auto &digit : digits )
-        digit.reset();
-}
-
-void GenericWindow::Keys::release()
-{
-    for( auto &letter : letters )
-        letter = false;
-    for( auto &digit : digits )
-        digit = false;
 }
 
 class GenericWindow::Implementation
@@ -1856,29 +2316,44 @@ public:
     }
 };
 
-GenericWindow::OutputData::OutputData( GraphicInterface::Window &desc ) : image( desc.content )
-{}
+std::vector<GenericWindow::Data> GenericWindow::stack;
 
-GenericWindow::GenericWindow( GraphicInterface::Window &d, HandleMsg h )
-    : handleMsg( std::move( h ) ), outputData( d ), desc( d )
+GenericWindow::GenericWindow( GraphicInterface::Window &d ) : outputData( d ), desc( d )
 {
     implementation = nullptr;
 
     // This code is positioned in lambda to accesses private members of GenericWindow
     auto windowProc = []( HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam ) -> LRESULT
     {
-        auto impl = ( Implementation * )GetWindowLongPtr( hwnd, GWLP_USERDATA );
+        Implementation *impl;
+        GenericWindow *window;
+        GraphicInterface::Window *dsc;
 
-        auto inputReset = [&impl]()
+        auto getData = [hwnd, &impl, &window, &dsc]()
         {
+            impl = ( Implementation * )GetWindowLongPtr( hwnd, GWLP_USERDATA );
             if( impl )
-                impl->window->inputReset();
+            {
+                window = impl->window;
+                dsc = &window->desc;
+            }
+            else
+            {
+                window = nullptr;
+                dsc = nullptr;
+            }
         };
 
-        auto inputRelease = [&impl]()
+        getData();
+
+        auto inputReset = [&window]()
         {
-            if( impl )
-                impl->window->inputRelease();
+            window->inputReset();
+        };
+
+        auto inputRelease = [&window]()
+        {
+            window->inputRelease();
         };
 
         auto quit = [hwnd]()
@@ -1890,23 +2365,16 @@ GenericWindow::GenericWindow( GraphicInterface::Window &d, HandleMsg h )
         {
             POINT point;
             GetCursorPos( &point );
-
-            RECT rect;
-            GetWindowRect( hwnd, &rect );
-
-            x = point.x - rect.left;
-            y = point.y - rect.top;
+            x = point.x;
+            y = point.y;
         };
 
         auto handle = [&]()
         {
-            if( !impl || !impl->window )
-                return;
-
             try
             {
-                if( impl->window->handleMsg )
-                    impl->window->handleMsg( impl->window->inputData, impl->window->outputData );
+                if( dsc->handleMsg )
+                    dsc->handleMsg( window->inputData, window->outputData );
             }
             catch( const Exception &e )
             {
@@ -1927,7 +2395,7 @@ GenericWindow::GenericWindow( GraphicInterface::Window &d, HandleMsg h )
                 return;
             }
 
-            if( impl->window->outputData.quit )
+            if( window->outputData.quit )
             {
                 quit();
                 return;
@@ -1935,50 +2403,43 @@ GenericWindow::GenericWindow( GraphicInterface::Window &d, HandleMsg h )
 
             inputReset();
 
-            auto &img = impl->window->outputData.image;
+            auto &img = window->outputData.image;
             if( img.changed() )
             {
-                updateWindowContent( impl->window->desc, hwnd );
+                updateWindowContent( *dsc, hwnd );
                 img.reset();
             }
 
-            auto &popup = impl->window->outputData.popup;
-            if( popup.changed() )
-            {
-                popup.get().run();
-                popup.reset();
-            }
-
-            impl->window->inputData.init = false;
+            window->inputData.init = false;
         };
 
         switch( message )
         {
         case WM_CREATE:
-            impl = ( Implementation * )( ( LPCREATESTRUCT )lParam )->lpCreateParams;
-            SetWindowLongPtr( hwnd, GWLP_USERDATA, ( LONG_PTR )impl );
-            impl->window->inputData.init = true;
+            SetWindowLongPtr( hwnd, GWLP_USERDATA, ( LONG_PTR )( ( LPCREATESTRUCT )lParam )->lpCreateParams );
+            getData();
+            window->inputData.init = true;
             handle();
             break;
         case WM_DESTROY:
             impl->hwnd = nullptr;
-            impl = nullptr;
-            SetWindowLongPtr( hwnd, GWLP_USERDATA, ( LONG_PTR )impl );
+            SetWindowLongPtr( hwnd, GWLP_USERDATA, ( LONG_PTR )nullptr );
+            getData();
             // PostQuitMessage( 0 );
             return 0;
         case WM_APP:
             break;
         case WM_NCHITTEST:
             {
-                RECT rect;
-                GetWindowRect( hwnd, &rect );
-                int x = LOWORD( lParam ) - rect.left;
-                int y = HIWORD( lParam ) - rect.top;
+                int x = LOWORD( lParam ), y = HIWORD( lParam );
+                int x1 = x, y1 = y;
 
-                bool left   = impl->window->desc.leftTrigger.contains( x, y );
-                bool right  = impl->window->desc.rightTrigger.contains( x, y );
-                bool top    = impl->window->desc.topTrigger.contains( x, y );
-                bool bottom = impl->window->desc.bottomTrigger.contains( x, y );
+                dsc->inner( x, y );
+
+                bool left   = dsc->leftTrigger.contains( x, y );
+                bool right  = dsc->rightTrigger.contains( x, y );
+                bool top    = dsc->topTrigger.contains( x, y );
+                bool bottom = dsc->bottomTrigger.contains( x, y );
 
                 if( top && left ) return HTTOPLEFT;
                 if( top && right ) return HTTOPRIGHT;
@@ -1990,24 +2451,22 @@ GenericWindow::GenericWindow( GraphicInterface::Window &d, HandleMsg h )
                 if( top ) return HTTOP;
                 if( bottom ) return HTBOTTOM;
 
-                for( auto active : impl->window->desc.interactive )
-                {
-                    if( active->contains( x, y ) )
-                        return HTCLIENT;
-                }
+                if( dsc->activeContains( x1, y1 ) )
+                    return HTCLIENT;
 
-                if( impl->window->desc.titleBar.contains( x, y ) )
+                if( dsc->titleBar.contains( x, y ) )
                     return HTCAPTION;
 
                 return HTCLIENT;
             }
         case WM_GETMINMAXINFO:
             {
-                if( impl )
+                // Can be launched before WM_CREATE
+                if( dsc )
                 {
                     MINMAXINFO *p = ( MINMAXINFO * )lParam;
-                    p->ptMinTrackSize.x = impl->window->desc.minWidth();
-                    p->ptMinTrackSize.y = impl->window->desc.minHeight();
+                    p->ptMinTrackSize.x = dsc->minWidth();
+                    p->ptMinTrackSize.y = dsc->minHeight();
                     return 0;
                 }
             }
@@ -2026,15 +2485,15 @@ GenericWindow::GenericWindow( GraphicInterface::Window &d, HandleMsg h )
             break;
         case WM_SIZE:
             {
-                updateWindowContent( impl->window->desc, hwnd );
+                updateWindowContent( *dsc, hwnd );
                 break;
             }
         case WM_MOVE:
             {
                 RECT rect;
                 GetWindowRect( hwnd, &rect );
-                impl->window->desc.self.x = rect.left;
-                impl->window->desc.self.y = rect.top;
+                dsc->x = rect.left;
+                dsc->y = rect.top;
                 break;
             }
         case WM_PAINT:
@@ -2045,16 +2504,20 @@ GenericWindow::GenericWindow( GraphicInterface::Window &d, HandleMsg h )
                 int x, y;
                 getPos( x, y );
 
-                impl->window->desc.hover( x, y );
+                dsc->hover( x, y );
 
-                if( impl->window->desc.content.contains( x, y ) )
+                dsc->inner( x, y );
+                if( dsc->mouseTrigger.contains( x, y ) )
                 {
-                    impl->window->inputData.mouseX = x - impl->window->desc.content.x;
-                    impl->window->inputData.mouseY = y - impl->window->desc.content.y;
+                    dsc->mouseTrigger.inner( x, y );
+                    impl->window->inputData.mouseX = x;
+                    impl->window->inputData.mouseY = y;
                     handle();
                 }
 
-                updateWindowContent( impl->window->desc, hwnd );
+                getData();
+                if( dsc )
+                    updateWindowContent( *dsc, hwnd );
             }
             return 0;
         case WM_LBUTTONDOWN:
@@ -2062,15 +2525,18 @@ GenericWindow::GenericWindow( GraphicInterface::Window &d, HandleMsg h )
                 int x, y;
                 getPos( x, y );
 
-                impl->window->desc.click( false, x, y );
+                dsc->click( false, x, y );
 
-                if( impl->window->desc.content.contains( x, y ) )
+                dsc->inner( x, y );
+                if( dsc->mouseTrigger.contains( x, y ) )
                 {
-                    impl->window->inputData.leftMouse = true;
+                    window->inputData.leftMouse = true;
                     handle();
                 }
 
-                updateWindowContent( impl->window->desc, hwnd );
+                getData();
+                if( dsc )
+                    updateWindowContent( *dsc, hwnd );
             }
             return 0;
         case WM_LBUTTONUP:
@@ -2078,24 +2544,28 @@ GenericWindow::GenericWindow( GraphicInterface::Window &d, HandleMsg h )
                 int x, y;
                 getPos( x, y );
 
-                impl->window->desc.click( true, x, y );
+                dsc->click( true, x, y );
 
-                if( impl->window->desc.content.contains( x, y ) )
+                dsc->inner( x, y );
+                if( dsc->mouseTrigger.contains( x, y ) )
                 {
-                    impl->window->inputData.leftMouse = false;
+                    window->inputData.leftMouse = false;
                     handle();
                 }
 
-                updateWindowContent( impl->window->desc, hwnd );
+                getData();
+                if( dsc )
+                    updateWindowContent( *dsc, hwnd );
             }
             return 0;
         case WM_RBUTTONDOWN:
             {
                 int x, y;
                 getPos( x, y );
-                if( impl->window->desc.content.contains( x, y ) )
+                dsc->inner( x, y );
+                if( dsc->mouseTrigger.contains( x, y ) )
                 {
-                    impl->window->inputData.rightMouse = true;
+                    window->inputData.rightMouse = true;
                     handle();
                 }
             }
@@ -2104,9 +2574,10 @@ GenericWindow::GenericWindow( GraphicInterface::Window &d, HandleMsg h )
             {
                 int x, y;
                 getPos( x, y );
-                if( impl->window->desc.content.contains( x, y ) )
+                dsc->inner( x, y );
+                if( dsc->mouseTrigger.contains( x, y ) )
                 {
-                    impl->window->inputData.rightMouse = false;
+                    window->inputData.rightMouse = false;
                     handle();
                 }
             }
@@ -2115,9 +2586,10 @@ GenericWindow::GenericWindow( GraphicInterface::Window &d, HandleMsg h )
             {
                 int x, y;
                 getPos( x, y );
-                if( impl->window->desc.content.contains( x, y ) )
+                dsc->inner( x, y );
+                if( dsc->mouseTrigger.contains( x, y ) )
                 {
-                    impl->window->inputData.middleMouse = true;
+                    window->inputData.middleMouse = true;
                     handle();
                 }
             }
@@ -2126,7 +2598,8 @@ GenericWindow::GenericWindow( GraphicInterface::Window &d, HandleMsg h )
             {
                 int x, y;
                 getPos( x, y );
-                if( impl->window->desc.content.contains( x, y ) )
+                dsc->inner( x, y );
+                if( dsc->mouseTrigger.contains( x, y ) )
                 {
                     impl->window->inputData.middleMouse = false;
                     handle();
@@ -2135,17 +2608,22 @@ GenericWindow::GenericWindow( GraphicInterface::Window &d, HandleMsg h )
             return 0;
         case WM_CHAR:
             {
+                auto process = [&]( auto value )
+                {
+                    if( dsc->input( value ) )
+                        dsc->focus( true );
+                    updateWindowContent( *dsc, hwnd );
+                };
+
                 if( wParam == '-' || wParam == '/' || wParam == '\\' || wParam == '+' || wParam == '.' || wParam == '_' || wParam == '\b' || wParam == ' ' )
                 {
-                    impl->window->desc.input( wParam );
-                    updateWindowContent( impl->window->desc, hwnd );
+                    process( wParam );
                     return 0;
                 }
 
                 if( ( '0' <= wParam && wParam <= '9' ) || ( 'a' <= wParam && wParam <= 'z' ) || ( 'A' <= wParam && wParam <= 'Z' ) )
                 {
-                    impl->window->desc.input( wParam );
-                    updateWindowContent( impl->window->desc, hwnd );
+                    process( wParam );
                     return 0;
                 }
             }
@@ -2166,7 +2644,7 @@ GenericWindow::GenericWindow( GraphicInterface::Window &d, HandleMsg h )
 
         if( pressed || released )
         {
-            auto &input = impl->window->inputData;
+            auto &input = window->inputData;
             switch( wParam )
             {
             case VK_UP:
@@ -2264,7 +2742,7 @@ GenericWindow::GenericWindow( GraphicInterface::Window &d, HandleMsg h )
             {
                 if( 'A' <= wParam && wParam <= 'Z' )
                 {
-                    auto &key = impl->window->inputData.keys.letter( wParam );
+                    auto &key = window->inputData.keys.letter( wParam );
                     key = pressed;
                     handle();
                     return 0;
@@ -2272,7 +2750,7 @@ GenericWindow::GenericWindow( GraphicInterface::Window &d, HandleMsg h )
 
                 if( '0' <= wParam && wParam <= '9' )
                 {
-                    auto &key = impl->window->inputData.keys.digit( wParam - '0' );
+                    auto &key = window->inputData.keys.digit( wParam - '0' );
                     key = pressed;
                     handle();
                     return 0;
@@ -2312,29 +2790,37 @@ GenericWindow::~GenericWindow()
     delete implementation;
 }
 
-void GenericWindow::run()
+void GenericWindow::run( bool lock )
 {
     auto lastWindow = GetForegroundWindow();
 
-    if( desc.self.x < 0 || desc.self.y < 0 )
+    if( desc.x < 0 || desc.y < 0 || desc.self.w < desc.minWidth() || desc.self.h < desc.minHeight() )
     {
         RECT screenRect;
         GetClientRect( GetDesktopWindow(), &screenRect );
 
-        float scalar = 0.0625f;
-        int width = desc.content.w;
-        int height = desc.content.h;
         int screenWidth = screenRect.right - screenRect.left;
         int screenHeight = screenRect.bottom - screenRect.top;
+
+        float scalar = 0.65f;
+        int width = Round( screenWidth * scalar );
+        int height = Round( screenHeight * scalar );
+
+        scalar = 0.0625f;
         float shiftX = ( screenWidth - width ) * scalar;
         float shiftY = ( screenHeight - height ) * scalar;
-        desc.self.x = desc.self.y = Min( shiftX, shiftY );
+
+        desc.x = desc.y = Round( Min( shiftX, shiftY ) );
+        desc.self.w = width;
+        desc.self.h = height;
     }
+
+    stack.push_back( {&desc, lock} );
 
     auto hwnd = implementation->hwnd = CreateWindowExW( WS_EX_LAYERED,
                                        implementation->className.c_str(), desc.title.value.c_str(),
                                        WS_POPUP | WS_THICKFRAME | WS_VISIBLE,
-                                       desc.self.x, desc.self.y, desc.self.w, desc.self.h,
+                                       desc.x, desc.y, desc.self.w, desc.self.h,
                                        nullptr, nullptr, GetModuleHandleW( nullptr ), implementation );
     makeException( hwnd );
     updateWindowContent( desc, hwnd );
@@ -2347,6 +2833,8 @@ void GenericWindow::run()
         TranslateMessage( &msg );
         DispatchMessage( &msg );
     }
+
+    stack.pop_back();
 
     DWORD windowProcessId = 0;
     GetWindowThreadProcessId( lastWindow, &windowProcessId );
