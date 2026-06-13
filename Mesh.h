@@ -5,6 +5,7 @@
 #include <vector>
 #include <map>
 
+#include "Information.h"
 #include "Vector2D.h"
 #include "Vector3D.h"
 #include "Affine3D.h"
@@ -28,10 +29,9 @@ public:
 
     struct Face
     {
-        // Positions of face's edges in `edges`, texture coordinates in `uv`, normals in `normals`
+        // Positions of faces' edges in `edges`, normals in `normals`, texture coordinates in `texturing`
         // Next edge always have common point with previous, start of an edge is finish of a previous edge
-
-        Triplet p, n, uv;
+        Triplet p, n, t;
     };
 
     using Group = std::map<std::wstring, Bitset>;
@@ -79,15 +79,21 @@ public:
 
     void clear();
 
+    std::optional<std::filesystem::path>& getMaterialsFile();
+    std::optional<Information::Item>& getMaterials();
+
+    const std::optional<std::filesystem::path>& getMaterialsFile() const;
+    const std::optional<Information::Item>& getMaterials() const;
+
     const std::vector<Vector3D> &getPoints() const;
     const std::vector<Vector3D> &getNormals() const;
-    const std::vector<Vector3D> &getUVs() const;
+    const std::vector<Vector3D> &getTexturing() const;
     const std::vector<Edge> &getEdges() const;
     const std::vector<Face> &getFaces() const;
     const Groups &getGroups() const;
 
-    bool input( const std::filesystem::path &path, std::filesystem::path *materials = nullptr );
-    bool output( const std::filesystem::path &path, std::filesystem::path *materials = nullptr ) const;
+    bool input( const std::filesystem::path &path );
+    bool output( const std::filesystem::path &path ) const;
 
     // Access
     template<typename V>
@@ -115,7 +121,7 @@ public:
 
         Face f;
         V3<Edge> e;
-        Va3<V> p, n, uv;
+        Va3<V> p, n, t;
     };
 
     template<typename M>
@@ -163,65 +169,15 @@ public:
     Iterator<const Mesh> end() const;
 private:
     // All faces are counterclockwise directed
-    // Lists of points, normals, uv and edges can contain unused entities
+    // Lists of points, normals, texturing and edges can contain unused entities
     // List of faces can NOT contain unused faces
     // Order of these entities in their containers is irrelevant
-    std::vector<Vector3D> points, normals, uv;
+
+    std::optional<std::filesystem::path> materialsFile;
+    std::optional<Information::Item> materials;
+
+    std::vector<Vector3D> points, normals, texturing;
     std::vector<Edge> edges;
     std::vector<Face> faces;
     Groups groups;
-};
-
-class Surface
-{
-public:
-    struct Options
-    {
-        struct Mm
-        {
-            double brightness, contrast;
-        };
-
-        std::wstring imfchan, type;
-        bool blendu, blendv, clamp;
-        long long int texres;
-        double boost, bm;
-        Vector3D o, s, t;
-        Mm mm;
-
-        Options();
-        void clear();
-    };
-
-    struct Texture
-    {
-        std::filesystem::path texture;
-        Options options;
-
-        Texture();
-        void clear();
-    };
-
-    struct Material
-    {
-        std::optional<Texture> map_ns, map_ka, map_kd, map_ks, map_ke, map_d, bump, disp, decal, refl;
-        Vector3D ka, kd, ks, ke;
-        double ns, ni, d;
-        unsigned illum;
-
-        Material();
-        void clear();
-
-        const Texture *get( int i ) const;
-    };
-
-    Surface();
-    ~Surface();
-
-    void clear();
-
-    std::map<std::wstring, Material> materials;
-
-    bool input( const std::filesystem::path &path );
-    bool output( const std::filesystem::path &path ) const;
 };

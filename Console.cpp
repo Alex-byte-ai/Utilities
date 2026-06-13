@@ -1406,7 +1406,7 @@ bool Console::configure( const std::optional<std::filesystem::path> &configFile 
     return _( true );
 }
 
-bool Console::save( const std::optional<std::filesystem::path> &path )
+void Console::save( const std::optional<std::filesystem::path> &path )
 {
     if( !data )
     {
@@ -1415,7 +1415,7 @@ bool Console::save( const std::optional<std::filesystem::path> &path )
         if( path )
             message.data = path->native();
         makeException( connect.output( message ) );
-        return true; //???
+        return;
     }
 
     Finalizer _;
@@ -1426,7 +1426,7 @@ bool Console::save( const std::optional<std::filesystem::path> &path )
     {
         std::ofstream file( *path, std::ios::binary );
         if( !file )
-            return false;
+            return;
 
         auto backup = data->coloring.currentColor;
         data->coloring.currentColor = Coloring::DefaultColor::console;
@@ -1445,13 +1445,14 @@ bool Console::save( const std::optional<std::filesystem::path> &path )
         std::vector<uint8_t> output;
         makeException( s.EncodeUtf8( output, pos ) );
         file.write( ( char * )output.data(), output.size() );
-        return true;
+        return;
     }
 
-    auto userPath = savePath();
-    if( userPath )
-        return save( userPath );
-    return false;
+    savePath( [this]( const auto & userPath )
+    {
+        if( userPath )
+            save( userPath );
+    } );
 }
 
 class Parser

@@ -37,7 +37,7 @@ public:
     void color( const std::optional<Color> &c );
 
     bool configure( const std::optional<std::filesystem::path> &configFile = {} );
-    bool save( const std::optional<std::filesystem::path> &path = {} );
+    void save( const std::optional<std::filesystem::path> &path = {} );
     bool command( const std::wstring &cmd );
 
     void flush();

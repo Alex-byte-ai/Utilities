@@ -3,6 +3,7 @@
 #include <filesystem>
 
 #include "Exception.h"
+#include "Window.h"
 
 void Context::Standard( const std::string &input, std::string &output )
 {
@@ -123,6 +124,8 @@ Scope Context::scope( std::string d )
 Scope::Scope( Context &c, std::string d )
     : description( std::move( d ) ), context( c )
 {
+    makeException( GraphicInterface::noWindows() );
+
     context.description = description;
 
     for( auto list : std::vector<bool> {false, true} )

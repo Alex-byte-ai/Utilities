@@ -9,6 +9,8 @@
 #include "Polygon.h"
 #include "Basic.h"
 
+// ---------------- Helpers ----------------
+
 // Line p0, p1
 // Triangle v0, v1, v2
 // The intersection point p
@@ -200,6 +202,346 @@ public:
     }
 };
 
+// ---------------- Material ----------------
+
+static void getValue( Scanner &s, Information::Wrapper& value, bool numeric )
+{
+    s.token.error( Scanner::Name );
+    auto key = ( std::wstring )s.token.s;
+    s.getToken();
+
+    Information::Array v;
+    while( true )
+    {
+        Information::Item item;
+        if( s.token.t == Scanner::Int )
+        {
+            item = s.token.n;
+            v.push( item );
+            s.getToken();
+        }
+        else if( s.token.t == Scanner::Real )
+        {
+            item = s.token.x;
+            v.push( item );
+            s.getToken();
+        }
+        else if( !numeric && s.token.t == Scanner::Name )
+        {
+            if( s.token.s == L"on" )
+            {
+                item = true;
+                v.push( item );
+                s.getToken();
+            }
+            else if( s.token.s == L"off" )
+            {
+                item = false;
+                v.push( item );
+                s.getToken();
+            }
+            else
+            {
+                item = ( std::wstring )s.token.s;
+                v.push( item );
+                s.getToken();
+            }
+        }
+        else
+            break;
+    }
+
+    if( v.size() > 1 )
+    {
+        value( key ) = std::move( v );
+    }
+    else if( v.size() == 1 )
+    {
+        value( key ) = std::move( v[0] );
+    }
+}
+
+static void getOptions( Scanner &s, Information::Wrapper& texture, Unicode::String &filePathSufix, std::optional<std::wstring>& type )
+{
+    type.reset();
+
+    s.getToken();
+
+    while( true )
+    {
+        filePathSufix.Clear();
+        filePathSufix << s.token.s;
+        // Options start with '-'
+        // If no '-', then nothing to parse
+        if( s.token.t != Scanner::Minus )
+            return;
+
+        filePathSufix.Clear();
+
+        // Consume '-'
+        s.getToken();
+
+        s.token.error( Scanner::Name );
+
+        bool isType = s.token.s == L"type";
+
+        getValue( s, texture, false );
+
+        if( isType )
+        {
+            type = ( std::wstring )texture( L"type" ).as<Information::String>();
+            texture( L"type" ) = Information::Null();
+        }
+    }
+
+    makeException( false );
+}
+
+static void getMap( const std::filesystem::path &root, std::wstring name, Scanner &s, Information::Wrapper& material )
+{
+    Information::Item textureItem;
+    Information::Wrapper texture( textureItem );
+
+    Unicode::String string;
+    std::optional<std::wstring> type;
+    getOptions( s, texture, string, type );
+
+    if( type )
+    {
+        makeException( name == L"refl" );
+        name += *type;
+    }
+
+    s.getLine();
+    string << s.token.s;
+    std::filesystem::path path( ( std::wstring )string );
+
+    auto map = path.is_absolute() ? path : root / path;
+    texture( L"map" ) = map.wstring();
+    material( name ) = std::move( textureItem );
+    s.getToken();
+}
+
+static void getMaterials( const std::filesystem::path &path, Information::Wrapper& materials )
+{
+    static const std::set<std::wstring> mapNames{L"map_Ns", L"map_Ka", L"map_Kd", L"map_Ks", L"map_Ke", L"map_D", L"map_d", L"bump", L"map_bump", L"disp", L"decal", L"refl"};
+
+    std::ifstream file;
+    file.open( path, std::ios::binary );
+
+    Scanner s( file, path.generic_wstring() );
+
+    auto root = path.parent_path();
+
+    materials = Information::Array();
+
+    while( s.token.t != Scanner::Nil )
+    {
+        s.token.error( Scanner::Name );
+        makeException( s.token.s == "newmtl" );
+
+        s.getLine();
+        s.getToken();
+
+        Information::Item item;
+        item = Information::Object();
+        item( L"name" ) = ( std::wstring )s.token.s;
+        Information::Wrapper material( item( L"material" ) = Information::Object() );
+
+        while( s.token.t != Scanner::Nil )
+        {
+            s.token.error( Scanner::Name );
+
+            if( s.token.s == "newmtl" )
+                break;
+
+            auto key = ( std::wstring )s.token.s;
+            if( mapNames.count( key ) )
+            {
+                getMap( root, std::move( key ), s, material );
+            }
+            else
+            {
+                getValue( s, material, true );
+            }
+        }
+
+        materials.as<Information::Array>().push( std::move( item ) );
+    }
+
+    static unsigned id = 0;
+    materials.output( L"output/" + std::to_wstring( id++ ) + L".txt" );
+}
+
+static bool setMaterials( const std::filesystem::path &path, const Information::Item& materials )
+{
+    Unicode::String data;
+
+    for( const auto &sample : materials.as<Information::Array>() )
+    {
+        const auto &name = sample( L"name" ).as<Information::String>();
+        const auto &mat = sample( L"material" ).as<Information::Object>();
+
+        auto writeTexture = [&]( const wchar_t *prefix, const std::optional<std::wstring> &type = {} )
+        {
+            if( !mat.exists( prefix ) )
+                return;
+
+            const auto &t = mat( prefix ).as<Information::Object>();
+
+            auto putBool = [&]( const std::wstring & key )
+            {
+                if( t.exists( key ) )
+                {
+                    const auto& value = t( key );
+                    data << L"-" << key << L" " << ( value.as<bool>() ? L"on" : L"off" ) << L" ";
+                }
+            };
+
+            auto putValue = [&]( const std::wstring & key )
+            {
+                if( t.exists( key ) )
+                {
+                    const auto& value = t( key );
+                    data << L"-" << key << L" " << value.as<long double>() << L" ";
+                }
+            };
+
+            auto putIndex = [&]( const std::wstring & key )
+            {
+                if( t.exists( key ) )
+                {
+                    const auto& value = t( key );
+                    data << L"-" << key << L" " << value.as<long long int>() << L" ";
+                }
+            };
+
+            auto putVector = [&]( const std::wstring & key )
+            {
+                if( t.exists( key ) )
+                {
+                    const auto& vector = t( key );
+                    data << L"-" <<  key << L" " << vector( L"x" ).as<long double>() << L" " << vector( L"y" ).as<long double>() << L" " << vector( L"z" ).as<long double>() << L"\n";
+                }
+            };
+
+            auto putString = [&]( const std::wstring & key )
+            {
+                if( t.exists( key ) )
+                {
+                    const auto& string = t( key );
+                    data << L"-" <<  key << L" " << string.as<Information::String>() << L"\n";
+                }
+            };
+
+            auto putMm = [&]( const std::wstring & key )
+            {
+                if( t.exists( key ) )
+                {
+                    const auto& mm = t( key );
+                    data << L"-" <<  key << L" " << mm( L"brightness" ).as<Information::String>() << L" " << mm( L"contrast" ).as<Information::String>() << L"\n";
+                }
+            };
+
+            data << prefix << L" ";
+
+            putBool( L"blendu" );
+            putBool( L"blendv" );
+            putBool( L"clamp" );
+            putValue( L"boost" );
+
+            if( std::wstring( L"bump" ) == prefix && mat.exists( L"bm" ) )
+                data << L"-bm " << mat( L"bm" ).as<long double>() << L" ";
+
+            putIndex( L"texres" );
+            putString( L"imfchan" );
+
+            if( type )
+                data << L"-type " << *type << L" ";
+
+            putMm( L"mm" );
+            putVector( L"o" );
+            putVector( L"s" );
+            putVector( L"t" );
+
+            data << t( L"map" ).as<Information::String>() << L"\n";
+        };
+
+        auto putColor = [&]( const std::wstring & key )
+        {
+            if( mat.exists( key ) )
+            {
+                const auto& color = mat( key );
+                data << key << L" " << color( L"x" ).as<long double>() << L" " << color( L"y" ).as<long double>() << L" " << color( L"z" ).as<long double>() << L"\n";
+            }
+        };
+
+        auto putValue = [&]( const std::wstring & key )
+        {
+            if( mat.exists( key ) )
+            {
+                const auto& value = mat( key );
+                data << key << L" " << value.as<long double>() << L"\n";
+            }
+        };
+
+        auto putIndex = [&]( const std::wstring & key )
+        {
+            if( mat.exists( key ) )
+            {
+                const auto& value = mat( key );
+                data << key << L" " << value.as<long long int>() << L"\n";
+            }
+        };
+
+        data << L"newmtl " << name << L"\n";
+
+        putColor( L"Ka" );
+        putColor( L"Kd" );
+        putColor( L"Ks" );
+        putColor( L"Ke" );
+        putValue( L"Ns" );
+        putValue( L"Ni" );
+        putValue( L"Tr" );
+        putIndex( L"illum" );
+
+        writeTexture( L"map_Ka" );
+        writeTexture( L"map_Kd" );
+        writeTexture( L"map_Ks" );
+        writeTexture( L"map_Ke" );
+        writeTexture( L"map_d" );
+        writeTexture( L"map_Ns" );
+        writeTexture( L"bump", {} );
+        writeTexture( L"disp" );
+        writeTexture( L"decal" );
+        writeTexture( L"refl", L"sphere" );
+        writeTexture( L"refl", L"cube_top" );
+        writeTexture( L"refl", L"cube_bottom" );
+        writeTexture( L"refl", L"cube_front" );
+        writeTexture( L"refl", L"cube_back" );
+        writeTexture( L"refl", L"cube_left" );
+        writeTexture( L"refl", L"cube_right" );
+
+        data << "\n";
+    }
+
+    size_t pos = 0;
+    std::vector<uint8_t> fileData;
+    if( !data.EncodeUtf8( fileData, pos, true ) )
+        return false;
+
+    std::ofstream file( path, std::ios::binary );
+    if( !file )
+        return false;
+
+    file.write( ( const char * )fileData.data(), fileData.size() );
+    return true;
+}
+
+// ---------------- Mesh ----------------
+
+// https://en.wikipedia.org/wiki/Wavefront_.obj_file
+
 Mesh::Groups::Groups( bool f0, bool f1, bool f2 )
 {
     if( f0 ) o.emplace();
@@ -264,18 +606,20 @@ Mesh::Mesh( Groups grps )
 }
 
 Mesh::Mesh( const Mesh &other ) :
+    materialsFile( other.materialsFile ),
     points( other.points ),
     normals( other.normals ),
-    uv( other.uv ),
+    texturing( other.texturing ),
     edges( other.edges ),
     faces( other.faces ),
     groups( other.groups )
 {}
 
 Mesh::Mesh( Mesh &&other ) :
+    materialsFile( std::move( other.materialsFile ) ),
     points( std::move( other.points ) ),
     normals( std::move( other.normals ) ),
-    uv( std::move( other.uv ) ),
+    texturing( std::move( other.texturing ) ),
     edges( std::move( other.edges ) ),
     faces( std::move( other.faces ) ),
     groups( std::move( other.groups ) )
@@ -283,9 +627,10 @@ Mesh::Mesh( Mesh &&other ) :
 
 Mesh &Mesh::operator=( const Mesh &other )
 {
+    materialsFile = other.materialsFile;
     points = other.points;
     normals = other.normals;
-    uv = other.uv;
+    texturing = other.texturing;
     edges = other.edges;
     faces = other.faces;
     groups = other.groups;
@@ -294,19 +639,17 @@ Mesh &Mesh::operator=( const Mesh &other )
 
 Mesh &Mesh::operator=( Mesh &&other )
 {
+    materialsFile = std::move( other.materialsFile );
     points = std::move( other.points );
     normals = std::move( other.normals );
-    uv = std::move( other.uv );
+    texturing = std::move( other.texturing );
     edges = std::move( other.edges );
     faces = std::move( other.faces );
     groups = std::move( other.groups );
     return*this;
 }
 
-std::optional<size_t> Mesh::intersectSegment(
-    const Vector3D &p0, const Vector3D &p1,
-    double &u, double &v, double &t
-) const
+std::optional<size_t> Mesh::intersectSegment( const Vector3D &p0, const Vector3D &p1, double &u, double &v, double &t ) const
 {
     double u0, v0, t0, tMin = std::numeric_limits<double>::max();
     std::optional<size_t> faceId;
@@ -347,8 +690,8 @@ void Mesh::cube()
         {0, 1, 1}, // 7
     };
 
-    // A single UV layout for every face:
-    uv =
+    // A single texturing layout for every face:
+    texturing =
     {
         {0, 0, 0}, // 0
         {1, 0, 0}, // 1
@@ -419,7 +762,7 @@ void Mesh::plane( size_t rows, size_t columns )
             double u = double( j ) / columns;
             Vector3D p( u, v, 0.0 );
             points.push_back( p );
-            uv.push_back( p );
+            texturing.push_back( p );
         }
     }
 
@@ -478,7 +821,7 @@ void Mesh::prism( const std::vector<Vector2D>& base )
         height.add( p.y );
     }
 
-    uv =
+    texturing =
     {
         {0, 0, 0},
         {1, 0, 0},
@@ -489,7 +832,7 @@ void Mesh::prism( const std::vector<Vector2D>& base )
     for( auto& p : base )
     {
         points.emplace_back( p.x, p.y, 1.0 );
-        uv.emplace_back( width.normalize( p.x ), width.normalize( p.y ), 0 );
+        texturing.emplace_back( width.normalize( p.x ), width.normalize( p.y ), 0 );
     }
 
     normals =
@@ -579,7 +922,7 @@ Mesh Mesh::extract( const Bitset &faceSet ) const
     Mesh result;
     result.points = points;
     result.normals = normals;
-    result.uv = uv;
+    result.texturing = texturing;
     result.edges = edges;
     result.faces = f( faces );
     result.groups.o = f( groups.o );
@@ -668,11 +1011,11 @@ void Mesh::normalize()
 
 void Mesh::optimize()
 {
-    Bitset usedEdges, usedNormals, usedUV, usedPoints;
+    Bitset usedEdges, usedNormals, usedTexturing, usedPoints;
 
     usedEdges.resize( edges.size() );
     usedNormals.resize( normals.size() );
-    usedUV.resize( uv.size() );
+    usedTexturing.resize( texturing.size() );
     usedPoints.resize( points.size() );
 
     for( const auto &f : faces )
@@ -685,9 +1028,9 @@ void Mesh::optimize()
         usedNormals.set( f.n.b );
         usedNormals.set( f.n.c );
 
-        usedUV.set( f.uv.a );
-        usedUV.set( f.uv.b );
-        usedUV.set( f.uv.c );
+        usedTexturing.set( f.t.a );
+        usedTexturing.set( f.t.b );
+        usedTexturing.set( f.t.c );
     }
 
     for( const auto &e : edges )
@@ -702,15 +1045,15 @@ void Mesh::optimize()
     DiscreteFunction normalRemap;
     normalRemap.squishEmptySpace( usedNormals );
 
-    DiscreteFunction uvRemap;
-    uvRemap.squishEmptySpace( usedUV );
+    DiscreteFunction texturingRemap;
+    texturingRemap.squishEmptySpace( usedTexturing );
 
     DiscreteFunction edgeRemap;
     edgeRemap.squishEmptySpace( usedEdges );
 
     points = pointRemap( points );
     normals = normalRemap( normals );
-    uv = uvRemap( uv );
+    texturing = texturingRemap( texturing );
     edges = edgeRemap( edges );
 
     for( auto &f : faces )
@@ -723,9 +1066,9 @@ void Mesh::optimize()
         f.n.b = normalRemap( f.n.b );
         f.n.c = normalRemap( f.n.c );
 
-        f.uv.a = uvRemap( f.uv.a );
-        f.uv.b = uvRemap( f.uv.b );
-        f.uv.c = uvRemap( f.uv.c );
+        f.t.a = texturingRemap( f.t.a );
+        f.t.b = texturingRemap( f.t.b );
+        f.t.c = texturingRemap( f.t.c );
     }
 
     for( auto &e : edges )
@@ -785,10 +1128,48 @@ void Mesh::clear()
 {
     points.clear();
     normals.clear();
-    uv.clear();
+    texturing.clear();
     edges.clear();
     faces.clear();
     groups.clear();
+    materialsFile.reset();
+}
+
+std::optional<std::filesystem::path>& Mesh::getMaterialsFile()
+{
+    return materialsFile;
+}
+
+std::optional<Information::Item>& Mesh::getMaterials()
+{
+    if( materials )
+        return materials;
+
+    if( materialsFile )
+    {
+        materials.emplace();
+        Information::Wrapper m( *materials );
+        try
+        {
+            ::getMaterials( *materialsFile, m );
+        }
+        catch( ... )
+        {
+            materials.reset();
+        }
+    }
+
+    return materials;
+}
+
+const std::optional<std::filesystem::path>& Mesh::getMaterialsFile() const
+{
+    return materialsFile;
+}
+
+const std::optional<Information::Item>& Mesh::getMaterials() const
+{
+    return materials;
 }
 
 const std::vector<Vector3D> &Mesh::getPoints() const
@@ -801,9 +1182,9 @@ const std::vector<Vector3D> &Mesh::getNormals() const
     return normals;
 }
 
-const std::vector<Vector3D> &Mesh::getUVs() const
+const std::vector<Vector3D> &Mesh::getTexturing() const
 {
-    return uv;
+    return texturing;
 }
 
 const std::vector<Mesh::Edge> &Mesh::getEdges() const
@@ -821,9 +1202,7 @@ const Mesh::Groups &Mesh::getGroups() const
     return groups;
 }
 
-// https://en.wikipedia.org/wiki/Wavefront_.obj_file
-
-bool Mesh::input( const std::filesystem::path &path, std::filesystem::path *materials )
+bool Mesh::input( const std::filesystem::path &path )
 {
     try
     {
@@ -831,9 +1210,6 @@ bool Mesh::input( const std::filesystem::path &path, std::filesystem::path *mate
         Scanner s( file, path.generic_wstring() );
 
         clear();
-
-        if( materials )
-            materials->clear();
 
         Bitset *o = nullptr, *g = nullptr, *m = nullptr;
 
@@ -852,15 +1228,15 @@ bool Mesh::input( const std::filesystem::path &path, std::filesystem::path *mate
             {
                 s.getLine();
 
-                if( materials )
-                {
-                    std::wstring string;
-                    if( !s.token.s.EncodeW( string ) )
-                        return false;
+                if( materialsFile )
+                    return false;
 
-                    std::filesystem::path secondary = string;
-                    *materials = secondary.is_absolute() ? secondary : path.parent_path() / secondary;
-                }
+                std::wstring string;
+                if( !s.token.s.EncodeW( string ) )
+                    return false;
+
+                std::filesystem::path secondary = string;
+                materialsFile = secondary.is_absolute() ? secondary : path.parent_path() / secondary;
 
                 s.getToken();
 
@@ -942,7 +1318,7 @@ bool Mesh::input( const std::filesystem::path &path, std::filesystem::path *mate
                 Vector3D vt;
                 if( !getVector( vt ) )
                     return false;
-                uv.push_back( vt );
+                texturing.push_back( vt );
 
                 continue;
             }
@@ -1036,16 +1412,16 @@ bool Mesh::input( const std::filesystem::path &path, std::filesystem::path *mate
 
                 auto getTexture = [this, &tex]( const auto & vertex )
                 {
-                    if( std::get<2>( vertex ).has_value() && *std::get<2>( vertex ) < uv.size() )
+                    if( std::get<2>( vertex ).has_value() && *std::get<2>( vertex ) < texturing.size() )
                         return *std::get<2>( vertex );
 
                     if( tex )
                     {
-                        uv.push_back( Vector3D( 0, 0, 0 ) );
+                        texturing.push_back( Vector3D( 0, 0, 0 ) );
                         tex = false;
                     }
 
-                    return uv.size() - 1;
+                    return texturing.size() - 1;
                 };
 
                 auto getNormal = [this]( const auto & vertex, size_t e0, size_t e1 )
@@ -1107,12 +1483,25 @@ bool Mesh::input( const std::filesystem::path &path, std::filesystem::path *mate
     return true;
 }
 
-bool Mesh::output( const std::filesystem::path &path, std::filesystem::path *materials ) const
+bool Mesh::output( const std::filesystem::path &path ) const
 {
     Unicode::String data;
 
-    if( materials )
-        data << materials->wstring() << L"\n";
+    if( materialsFile )
+    {
+        if( materials )
+        {
+            ::setMaterials( *materialsFile, *materials );
+        }
+        else
+        {
+            Information::Item temporary;
+            Information::Wrapper t( temporary );
+            ::getMaterials( *materialsFile, t );
+            ::setMaterials( *materialsFile, temporary );
+        }
+        data << materialsFile->wstring() << L"\n";
+    }
 
     data << L"o Mesh\n";
 
@@ -1122,7 +1511,7 @@ bool Mesh::output( const std::filesystem::path &path, std::filesystem::path *mat
     for( auto &v : normals )
         data << L"vn " << v.x << L" " << v.y << L" " << v.z << L"\n";
 
-    for( auto &v : uv )
+    for( auto &v : texturing )
         data << L"vt " << v.x << L" " << v.y << L" " << v.z << L"\n";
 
     for( auto &face : faces )
@@ -1135,18 +1524,18 @@ bool Mesh::output( const std::filesystem::path &path, std::filesystem::path *mat
         auto pointB = edgeB.s + 1;
         auto pointC = edgeC.s + 1;
 
-        auto uvA = face.uv.a + 1;
-        auto uvB = face.uv.b + 1;
-        auto uvC = face.uv.c + 1;
+        auto texturingA = face.t.a + 1;
+        auto texturingB = face.t.b + 1;
+        auto texturingC = face.t.c + 1;
 
         auto normalA = face.n.a + 1;
         auto normalB = face.n.b + 1;
         auto normalC = face.n.c + 1;
 
         data << L"f ";
-        data << pointA << L"/" << uvA << L"/" << normalA << L" ";
-        data << pointB << L"/" << uvB << L"/" << normalB << L" ";
-        data << pointC << L"/" << uvC << L"/" << normalC << L"\n";
+        data << pointA << L"/" << texturingA << L"/" << normalA << L" ";
+        data << pointB << L"/" << texturingB << L"/" << normalB << L" ";
+        data << pointC << L"/" << texturingC << L"/" << normalC << L"\n";
     }
 
     size_t pos = 0;
@@ -1169,7 +1558,7 @@ Mesh::Data<Vector3D> Mesh::operator[]( size_t id ) const
     auto &f = faces[id];
     V3<Edge> e{ edges[f.p.a], edges[f.p.b], edges[f.p.c] };
     Va3<Vector3D> p{ points[e.a.s], points[e.b.s], points[e.c.s] };
-    Va3<Vector3D> t{ points[f.uv.a], points[f.uv.b], points[f.uv.c] };
+    Va3<Vector3D> t{ points[f.t.a], points[f.t.b], points[f.t.c] };
     Va3<Vector3D> n{ points[f.n.a], points[f.n.b], points[f.n.c] };
     return { f, e, p, n, t };
 }
@@ -1181,7 +1570,7 @@ Mesh::Data<Vector3D&> Mesh::operator[]( size_t id )
     auto &f = faces[id];
     V3<Edge> e{ edges[f.p.a], edges[f.p.b], edges[f.p.c] };
     Va3<Vector3D&> p{ points[e.a.s], points[e.b.s], points[e.c.s] };
-    Va3<Vector3D&> t{ points[f.uv.a], points[f.uv.b], points[f.uv.c] };
+    Va3<Vector3D&> t{ points[f.t.a], points[f.t.b], points[f.t.c] };
     Va3<Vector3D&> n{ points[f.n.a], points[f.n.b], points[f.n.c] };
     return { f, e, p, n, t };
 }
@@ -1204,639 +1593,4 @@ Mesh::Iterator<const Mesh> Mesh::begin() const
 Mesh::Iterator<const Mesh> Mesh::end() const
 {
     return Iterator<const Mesh>( *this, faces.size() );
-}
-
-static bool getOptions( Scanner &s, Surface::Options &options, Unicode::String &filePathSufix )
-{
-    auto getBool = [&]( bool & value )
-    {
-        s.getToken();
-        if( s.token.t == Scanner::Name )
-        {
-            if( s.token.s == "on" )
-            {
-                value = true;
-                s.getToken();
-                return true;
-            }
-            if( s.token.s == "off" )
-            {
-                value = false;
-                s.getToken();
-                return true;
-            }
-            return false;
-        }
-        if( s.token.t == Scanner::Int )
-        {
-            if( s.token.n == 1 )
-            {
-                value = true;
-                s.getToken();
-                return true;
-            }
-            if( s.token.n == 0 )
-            {
-                value = false;
-                s.getToken();
-                return true;
-            }
-            return false;
-        }
-        return false;
-    };
-
-    auto getTriplet = [&]( Vector3D & value )
-    {
-        // u [v [w]]
-        s.getToken();
-        if( s.token.t != Scanner::Int && s.token.t != Scanner::Real )
-            return false;
-
-        value.x = s.token.x;
-
-        s.getToken();
-        if( s.token.t != Scanner::Int && s.token.t != Scanner::Real )
-            return true;
-
-        value.y = s.token.x;
-
-        s.getToken();
-        if( s.token.t != Scanner::Int && s.token.t != Scanner::Real )
-            return true;
-
-        value.z = s.token.x;
-
-        s.getToken();
-        return true;
-    };
-
-    options.clear();
-
-    s.getToken();
-
-    while( true )
-    {
-        filePathSufix.Clear();
-        filePathSufix << s.token.s;
-        // Options start with '-'
-        // If no '-', then nothing to parse
-        if( s.token.t != Scanner::Minus )
-            return true;
-
-        filePathSufix.Clear();
-
-        // consume '-'
-        s.getToken();
-
-        if( s.token.t != Scanner::Name )
-            return false;
-
-        // parse option name
-
-        if( s.token.s == "blendu" )
-        {
-            // set horizontal texture blending
-            if( getBool( options.blendu ) )
-                continue;
-            break;
-        }
-
-        if( s.token.s == "blendv" )
-        {
-            // set vertical texture blending
-            if( getBool( options.blendv ) )
-                continue;
-            break;
-        }
-
-        if( s.token.s == "boost" )
-        {
-            // boost mip-map sharpness
-
-            s.getToken();
-            if( s.token.t != Scanner::Int && s.token.t != Scanner::Real )
-                break;
-
-            options.boost = s.token.x;
-
-            if( options.boost < 0 )
-                break;
-
-            s.getToken();
-            continue;
-        }
-
-        if( s.token.s == "mm" )
-        {
-            // Modify texture map values
-
-            s.getToken();
-            if( s.token.t != Scanner::Int && s.token.t != Scanner::Real )
-                break;
-
-            options.mm.brightness = s.token.x;
-
-            s.getToken();
-            if( s.token.t != Scanner::Int && s.token.t != Scanner::Real )
-                break;
-
-            options.mm.contrast = s.token.x;
-
-            s.getToken();
-            continue;
-        }
-
-        if( s.token.s == "o" )
-        {
-            // Origin offset
-            if( getTriplet( options.o ) )
-                continue;
-            break;
-        }
-
-        if( s.token.s == "s" )
-        {
-            // Scale
-            if( getTriplet( options.s ) )
-                continue;
-            break;
-        }
-
-        if( s.token.s == "t" )
-        {
-            // Turbulence
-            if( getTriplet( options.t ) )
-                continue;
-            break;
-        }
-
-        if( s.token.s == "texres" )
-        {
-            // Texture resolution to create
-
-            s.getToken();
-            if( s.token.t != Scanner::Int || s.token.n < 1 )
-                break;
-
-            options.texres = s.token.n;
-
-            if( options.texres < 1 )
-                break;
-
-            s.getToken();
-            continue;
-        }
-
-        if( s.token.s == "clamp" )
-        {
-            // Only render texels in the clamped 0-1 range
-            // when unclamped, textures are repeated across a surface,
-            // when clamped, only texels which fall within the 0-1 range are rendered
-
-            if( getBool( options.clamp ) )
-                continue;
-            break;
-        }
-
-        if( s.token.s == "bm" )
-        {
-            // Bump multiplier (for bump maps only)
-
-            s.getToken();
-            if( s.token.t != Scanner::Int && s.token.t != Scanner::Real )
-                break;
-
-            options.bm = s.token.x;
-
-            s.getToken();
-            continue;
-        }
-
-        if( s.token.s == "imfchan" )
-        {
-            // Specifies which channel of the file is used to create a scalar or bump texture
-            // (the default for bump is 'l' and for decal is 'm')
-            // r:red | g:green | b:blue | m:matte | l:luminance | z:z-depth
-
-            s.getToken();
-            if( s.token.t != Scanner::Name )
-                break;
-
-            std::wstring value;
-            if( !s.token.s.EncodeW( value ) )
-                break;
-
-            options.imfchan = value;
-
-            s.getToken();
-            continue;
-        }
-
-        if( s.token.s == "type" )
-        {
-            // Specifies a type for a reflection map
-            // when using a cube map, the texture file for each side of the cube is specified separately
-            // sphere | cube_top | cube_bottom | cube_front  | cube_back | cube_left | cube_right
-
-            s.getToken();
-            if( s.token.t != Scanner::Name )
-                break;
-
-            std::wstring value;
-            if( !s.token.s.EncodeW( value ) )
-                break;
-
-            options.type = value;
-
-            s.getToken();
-            continue;
-        }
-
-        // If we get here, the option name was not recognized
-        return false;
-    }
-
-    return false;
-}
-
-static bool getMap( const std::filesystem::path &root, const wchar_t *name, Scanner &s, bool &pass, std::optional<Surface::Texture> &map, const wchar_t *altName = nullptr )
-{
-    if( pass )
-        return true;
-
-    if( s.token.s != name && ( !altName || s.token.s != altName ) )
-    {
-        pass = false;
-        return true;
-    }
-
-    map.emplace();
-
-    Unicode::String string;
-    if( !getOptions( s, map->options, string ) )
-        return false;
-
-    s.getLine();
-    string << s.token.s;
-
-    std::wstring wstring;
-    if( !string.EncodeW( wstring ) )
-        return false;
-
-    std::filesystem::path path( wstring );
-
-    map->texture = path.is_absolute() ? path : root / path;
-    s.getToken();
-
-    pass = true;
-    return true;
-}
-
-static void getScalar( const wchar_t *name, Scanner &s, bool &pass, double &scalar, const wchar_t *altName = nullptr )
-{
-    if( pass )
-        return;
-
-    bool f = !altName || s.token.s != altName;
-
-    if( s.token.s != name && f )
-    {
-        pass = false;
-        return;
-    }
-
-    s.getToken();
-    s.token.error( Scanner::Real );
-
-    // Only altName used for scalar is Tr (for d)
-    scalar = f ? s.token.x : 1 - s.token.x;
-    s.getToken();
-
-    pass = true;
-}
-
-static void getIndex( const wchar_t *name, Scanner &s, bool &pass, unsigned &index, const wchar_t *altName = nullptr )
-{
-    if( pass )
-        return;
-
-    if( s.token.s != name && ( !altName || s.token.s != altName ) )
-    {
-        pass = false;
-        return;
-    }
-
-    s.getToken();
-    s.token.error( Scanner::Int );
-
-    index = s.token.n;
-    s.getToken();
-
-    pass = true;
-}
-
-static void getVector( const wchar_t *name, Scanner &s, bool &pass, Vector3D &vector, const wchar_t *altName = nullptr )
-{
-    if( pass )
-        return;
-
-    if( s.token.s != name && ( !altName || s.token.s != altName ) )
-    {
-        pass = false;
-        return;
-    }
-
-    s.getToken();
-    vector.x = s.token.x;
-    s.token.error( Scanner::Real );
-
-    s.getToken();
-    vector.y = s.token.x;
-    s.token.error( Scanner::Real );
-
-    s.getToken();
-    vector.z = s.token.x;
-    s.token.error( Scanner::Real );
-
-    s.getToken();
-
-    makeException( vector.x < 0 || vector.x > 1 || vector.y < 0 || vector.y > 1 || vector.z < 0 || vector.z > 1 );
-
-    pass = true;
-}
-
-// Illumination model's index:
-// 0: Color on and Ambient off
-// 1: Color on and Ambient on
-// 2: Highlight on
-// 3: Reflection on and Ray trace on
-// 4: Transparency: Glass on, Reflection: Ray trace on
-// 5: Reflection: Fresnel on and Ray trace on
-// 6: Transparency: Refraction on, Reflection: Fresnel off and Ray trace on
-// 7: Transparency: Refraction on, Reflection: Fresnel on and Ray trace on
-// 8: Reflection on and Ray trace off
-// 9: Transparency: Glass on, Reflection: Ray trace off
-// 10: Casts shadows onto invisible surfaces
-
-Surface::Options::Options()
-{
-    clear();
-}
-
-void Surface::Options::clear()
-{
-    mm.brightness = 0.0;
-    mm.contrast = 1.0;
-
-    blendu = true;
-    blendv = true;
-    clamp = false;
-
-    o = Vector3D( 0.0, 0.0, 0.0 );
-    s = Vector3D( 1.0, 1.0, 1.0 );
-    t = Vector3D( 0.0, 0.0, 0.0 );
-
-    imfchan = L"";
-    type = L"";
-
-    boost = -1.0;
-    bm = 1.0;
-
-    texres = -1;
-}
-
-Surface::Texture::Texture()
-{
-    clear();
-}
-
-void Surface::Texture::clear()
-{
-    texture.clear();
-    options.clear();
-}
-
-Surface::Material::Material()
-{
-    clear();
-}
-
-void Surface::Material::clear()
-{
-    map_ns.reset();
-    map_ka.reset();
-    map_kd.reset();
-    map_ks.reset();
-    map_ke.reset();
-    map_d.reset();
-    bump.reset();
-    disp.reset();
-    decal.reset();
-    refl.reset();
-
-    ka = Vector3D( 0.02, 0.02, 0.02 );
-    kd = Vector3D( 0.60, 0.60, 0.60 );
-    ks = Vector3D( 0.80, 0.80, 0.80 );
-    ke = Vector3D( 0.01, 0.01, 0.01 );
-
-    ns = 30.0;
-    ni = 1.0;
-    d = 1.0;
-
-    illum = 2;
-}
-
-const Surface::Texture *Surface::Material::get( int i ) const
-{
-    if( i == 0 && map_ns )
-        return &*map_ns;
-    else if( i == 1 && map_ka )
-        return &*map_ka;
-    else if( i == 2 && map_kd )
-        return &*map_kd;
-    else if( i == 3 && map_ks )
-        return &*map_ks;
-    else if( i == 4 && map_ke )
-        return &*map_ke;
-    else if( i == 5 && map_d )
-        return &*map_d;
-    else if( i == 6 && bump )
-        return &*bump;
-    else if( i == 7 && disp )
-        return &*disp;
-    else if( i == 8 && decal )
-        return &*decal;
-    else if( i == 9 && refl )
-        return &*refl;
-    return nullptr;
-}
-
-Surface::Surface()
-{}
-
-Surface::~Surface()
-{}
-
-void Surface::clear()
-{
-    materials.clear();
-}
-
-bool Surface::input( const std::filesystem::path &path )
-{
-    try
-    {
-        std::ifstream file;
-        file.open( path, std::ios::binary );
-
-        Scanner s( file, path.generic_wstring() );
-
-        auto root = path.parent_path();
-
-        clear();
-
-        while( s.token.t != Scanner::Nil )
-        {
-            s.token.error( Scanner::Name );
-
-            if( s.token.s != "newmtl" )
-                return false;
-
-            s.getLine();
-
-            std::wstring mtl;
-            if( !s.token.s.EncodeW( mtl ) )
-                return false;
-
-            s.getToken();
-
-            auto& material = materials.emplace( mtl, Surface::Material() ).first->second;
-
-            bool pass;
-            while( s.token.t != Scanner::Nil )
-            {
-                pass = false;
-
-                s.token.error( Scanner::Name );
-
-                getScalar( L"Ns", s, pass, material.ns ); // Specular exponent (Shininess)
-                getScalar( L"Ni", s, pass, material.ni ); // Refractive index
-                getIndex( L"illum", s, pass, material.illum ); // Illumination model's index
-                getVector( L"Ka", s, pass, material.ka ); // Color of material for ambient lighting
-                getVector( L"Kd", s, pass, material.kd ); // Color of material for diffuse reflection
-                getVector( L"Ks", s, pass, material.ks ); // Color of material for specular reflection
-                getVector( L"Ke", s, pass, material.ke ); // Color of material for emission
-                getScalar( L"d", s, pass, material.d, L"Tr" ); // Opaqueness
-                getMap( root, L"map_Ns", s, pass, material.map_ns ); // Specular exponent texture
-                getMap( root, L"map_Ka", s, pass, material.map_ka ); // Texture of material for ambient lighting
-                getMap( root, L"map_Kd", s, pass, material.map_kd ); // Texture of material for diffuse reflection
-                getMap( root, L"map_Ks", s, pass, material.map_ks ); // Texture of material for specular reflection
-                getMap( root, L"map_Ke", s, pass, material.map_ke ); // Texture of material for emission
-                getMap( root, L"map_D", s, pass, material.map_d, L"map_d" ); // Opaqueness texture
-                getMap( root, L"bump", s, pass, material.bump, L"map_bump" ); // Effect is like embossing the surface with the texture
-                getMap( root, L"disp", s, pass, material.disp ); // Same as bump, but it modifies actual geometry
-                getMap( root, L"decal", s, pass, material.decal ); // Layered on top of main texture to create stickers/markings/logos/labels
-                getMap( root, L"refl", s, pass, material.refl ); // A reflection of environment in a material
-                if( pass )
-                    continue;
-                break;
-            }
-
-            if( 0 > material.ns || material.ns > 1000 )
-                return false;
-
-            if( 0 >= material.ni || material.ni > 10 )
-                return false;
-
-            if( 0 > material.d || material.d > 1 )
-                return false;
-
-            if( material.illum > 10 )
-                return false;
-        }
-    }
-    catch( ... )
-    {
-        return false;
-    }
-
-    return true;
-}
-
-bool Surface::output( const std::filesystem::path & path ) const
-{
-    Unicode::String data;
-
-    for( const auto &matPair : materials )
-    {
-        const auto &name = matPair.first;
-        const auto &mat = matPair.second;
-
-        data << "newmtl " << name << "\n";
-        data << "Ka " << mat.ka.x << " " << mat.ka.y << " " << mat.ka.z << "\n";
-        data << "Kd " << mat.kd.x << " " << mat.kd.y << " " << mat.kd.z << "\n";
-        data << "Ks " << mat.ks.x << " " << mat.ks.y << " " << mat.ks.z << "\n";
-        data << "Ke " << mat.ke.x << " " << mat.ke.y << " " << mat.ke.z << "\n";
-        data << "Ns " << mat.ns << "\n";
-        data << "Ni " << mat.ni << "\n";
-        data << "Tr " << mat.d << "\n";
-        data << "illum " << mat.illum << "\n";
-
-        auto writeTexture = [&]( const std::string & prefix, const std::optional<Texture> &texture )
-        {
-            if( !texture )
-                return;
-
-            const auto &t = *texture;
-            const auto &opt = t.options;
-
-            data << prefix << " ";
-
-            data << "-blendu " << ( opt.blendu ? "on " : "off " );
-            data << "-blendv " << ( opt.blendv ? "on " : "off " );
-            data << "-clamp " << ( opt.clamp ? "on " : "off " );
-            data << "-boost " << opt.boost << " ";
-            data << "-bm " << opt.bm << " ";
-            data << "-texres " << opt.texres << " ";
-
-            if( !opt.imfchan.empty() )
-                data << "-imfchan " << opt.imfchan << " ";
-
-            if( !opt.type.empty() )
-                data << "-type " << opt.type << " ";
-
-            data << "-mm " << opt.mm.brightness << " " << opt.mm.contrast << " ";
-            data << "-o " << opt.o.x << " " << opt.o.y << " " << opt.o.z << " ";
-            data << "-s " << opt.s.x << " " << opt.s.y << " " << opt.s.z << " ";
-            data << "-t " << opt.t.x << " " << opt.t.y << " " << opt.t.z << " ";
-
-            data << t.texture.wstring() << "\n";
-        };
-
-        writeTexture( "map_Ka", mat.map_ka );
-        writeTexture( "map_Kd", mat.map_kd );
-        writeTexture( "map_Ks", mat.map_ks );
-        writeTexture( "map_Ke", mat.map_ke );
-        writeTexture( "map_d", mat.map_d );
-        writeTexture( "map_Ns", mat.map_ns );
-        writeTexture( "bump", mat.bump );
-        writeTexture( "disp", mat.disp );
-        writeTexture( "decal", mat.decal );
-        writeTexture( "refl", mat.refl );
-
-        data << "\n";
-    }
-
-    size_t pos = 0;
-    std::vector<uint8_t> fileData;
-    if( !data.EncodeUtf8( fileData, pos, true ) )
-        return false;
-
-    std::ofstream file( path, std::ios::binary );
-    if( !file )
-        return false;
-
-    file.write( ( const char * )fileData.data(), fileData.size() );
-    return true;
 }

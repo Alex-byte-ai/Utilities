@@ -202,18 +202,18 @@ std::vector<Item>::const_iterator Array::end() const
 Wrapper::Wrapper( Item &s ) : root( nullptr ), self( &s )
 {}
 
-Wrapper &Wrapper::operator=( const Item &item )
+Item &Wrapper::operator=( const Item &item )
 {
     Item copy = item;
     collapse( copy );
-    return *this;
+    return *self;
 }
 
-Wrapper &Wrapper::operator=( Item &&item )
+Item &Wrapper::operator=( Item &&item )
 {
     Item transit = item;
     collapse( transit );
-    return *this;
+    return *self;
 }
 
 Wrapper Wrapper::operator()( const KeyVerbatim &key )
@@ -276,6 +276,13 @@ Wrapper Wrapper::operator[]( const KeyNumeric &key )
         result.id = key;
     }
     return result;
+}
+
+bool Wrapper::output( const std::filesystem::path &path ) const
+{
+    if( !self )
+        return false;
+    return self->output( path );
 }
 
 Wrapper::Wrapper() : root( nullptr ), self( nullptr )

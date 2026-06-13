@@ -93,20 +93,22 @@ class Wrapper
 public:
     explicit Wrapper( Item &self );
 
-    Wrapper &operator=( const Item &item );
-    Wrapper &operator=( Item &&item );
+    Item &operator=( const Item &item );
+    Item &operator=( Item &&item );
 
     template <typename T>
-    Wrapper operator=( const T &value )
+    Item &operator=( const T &value )
     {
         Item item;
         item = value;
         collapse( item );
-        return *this;
+        return *self;
     }
 
     Wrapper operator()( const KeyVerbatim &key );
     Wrapper operator[]( const KeyNumeric &key );
+
+    bool output( const std::filesystem::path &path ) const;
 
     template <typename T>
     bool is() const;

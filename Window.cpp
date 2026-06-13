@@ -11,6 +11,78 @@
 #include "Lambda.h"
 #include "Basic.h"
 
+class GenericWindow
+{
+public:
+    GenericWindow( GraphicInterface::Window &desc );
+    ~GenericWindow();
+
+    // Creates and runs an interactive window
+    // Returns true, on an initial call, that sets up window system and hangs in message loop
+    // Windows created before call with 'lock' = true, will stop responding
+    static bool create( GraphicInterface::Window &desc, bool lock = true );
+
+    // Request removal of this window
+    void close();
+
+    void maximize();
+    void minimize();
+
+    // Returns true, if a message was processed
+    bool handle();
+
+    static void update();
+
+    static size_t count();
+private:
+    void inputReset();
+    void inputRelease();
+
+    static void killFocus();
+    static void setFocus();
+
+    static bool focus( int x, int y );
+
+    // Processes an action for a focused window
+    static bool process( const std::function<bool( GenericWindow& )> & action );
+
+    // Removes windows, that requested removal
+    static void cleanup();
+
+    GraphicInterface::InputData inputData;
+    GraphicInterface::OutputData outputData;
+    GraphicInterface::Window& desc;
+
+    int originalX, originalY, originalW, originalH;
+    bool maximized;
+
+    std::optional<Popup> popup;
+
+    struct Data
+    {
+        std::shared_ptr<GenericWindow> window;
+        bool lock;
+
+        Data( std::shared_ptr<GenericWindow> w, bool l ) : window( std::move( w ) ), lock( l )
+        {}
+
+        Data( Data&& other ) : window( std::move( other.window ) ), lock( other.lock )
+        {};
+
+        Data& operator=( Data&& other )
+        {
+            window = std::move( other.window );
+            lock = other.lock;
+            return *this;
+        };
+    };
+
+    static std::vector<Data> stack;
+    static GenericWindow *active;
+    static bool needCleanup;
+    static HWND hndwnd;
+};
+
 namespace GraphicInterface
 {
 static void drawLineR( uint32_t *pixels, int width, int height, int x, int y, int size, uint32_t color )
@@ -23,7 +95,6 @@ static void drawLineR( uint32_t *pixels, int width, int height, int x, int y, in
 
     if( x0 < 0 )
         x0 = 0;
-
     if( x1 > width )
         x1 = width;
 
@@ -41,7 +112,6 @@ static void drawLineD( uint32_t *pixels, int width, int height, int x, int y, in
 
     if( y0 < 0 )
         y0 = 0;
-
     if( y1 > height )
         y1 = height;
 
@@ -49,25 +119,73 @@ static void drawLineD( uint32_t *pixels, int width, int height, int x, int y, in
         pixels[y * width + x] = color;
 }
 
-static void drawLineRD( uint32_t *pixels, int width, int, int x, int y, int size, uint32_t color )
+static void drawLineRD( uint32_t *pixels, int width, int height, int x, int y, int size, uint32_t color )
 {
-    while( size > 0 )
+    int b = y - x;
+
+    int y0 = y;
+    int y1 = y + size;
+
+    int x0 = x;
+    int x1 = x + size;
+
+    if( x0 < 0 )
+        x0 = 0;
+    if( x1 > width )
+        x1 = width;
+
+    if( y0 < 0 )
+        y0 = 0;
+    if( y1 > height )
+        y1 = height;
+
+    y0 -= b;
+    y1 -= b;
+
+    x0 = Max( x0, y0 );
+    x1 = Min( x1, y1 );
+
+    x = x0;
+    while( x < x1 )
     {
+        y = x + b;
         pixels[y * width + x] = color;
         ++x;
-        ++y;
-        --size;
     }
 }
 
-static void drawLineRU( uint32_t *pixels, int width, int, int x, int y, int size, uint32_t color )
+static void drawLineRU( uint32_t *pixels, int width, int height, int x, int y, int size, uint32_t color )
 {
-    while( size > 0 )
+    int b = y + x;
+
+    int y0 = y - size + 1;
+    int y1 = y + 1;
+
+    int x0 = x;
+    int x1 = x + size;
+
+    if( x0 < 0 )
+        x0 = 0;
+    if( x1 > width )
+        x1 = width;
+
+    if( y0 < 0 )
+        y0 = 0;
+    if( y1 > height )
+        y1 = height;
+
+    y0 = b - y0;
+    y1 = b - y1;
+
+    x0 = Max( x0, y1 + 1 );
+    x1 = Min( x1, y0 + 1 );
+
+    x = x0;
+    while( x < x1 )
     {
+        y = b - x;
         pixels[y * width + x] = color;
         ++x;
-        --y;
-        --size;
     }
 }
 
@@ -94,7 +212,7 @@ static bool renderTextToBuffer(
             lines.push_back( L"" );
     }
 
-    HDC hdc = CreateCompatibleDC( NULL );
+    HDC hdc = CreateCompatibleDC( nullptr );
     if( !hdc )
         return false;
 
@@ -160,7 +278,7 @@ static bool renderTextToBuffer(
     bmi.bmiHeader.biCompression = BI_RGB;
 
     void* bits = nullptr;
-    HBITMAP hBitmap = CreateDIBSection( NULL, &bmi, DIB_RGB_COLORS, &bits, NULL, 0 );
+    HBITMAP hBitmap = CreateDIBSection( nullptr, &bmi, DIB_RGB_COLORS, &bits, nullptr, 0 );
     if( !hBitmap || !bits )
     {
         SelectObject( hdc, oldFont );
@@ -171,7 +289,7 @@ static bool renderTextToBuffer(
         return false;
     }
 
-    HDC memDC = CreateCompatibleDC( NULL );
+    HDC memDC = CreateCompatibleDC( nullptr );
     if( !memDC )
     {
         DeleteObject( hBitmap );
@@ -264,6 +382,52 @@ Group::Group( const Group& other ) : Object( other )
 Group::~Group()
 {}
 
+int Group::width() const
+{
+    int left = std::numeric_limits<int>::max(), right = std::numeric_limits<int>::lowest();
+    for( auto object : objects )
+    {
+        auto size = object->width();
+        if( object->visible && size > 0 )
+        {
+            auto p = object->x;
+            if( p < left )
+                left = p;
+            p += size;
+            if( right > p )
+                right = p;
+        }
+    }
+
+    if( right <= left )
+        return 0;
+
+    return right - left;
+}
+
+int Group::height() const
+{
+    int top = std::numeric_limits<int>::max(), bottom = std::numeric_limits<int>::lowest();
+    for( auto object : objects )
+    {
+        auto size = object->height();
+        if( object->visible && size > 0 )
+        {
+            auto p = object->y;
+            if( p < top )
+                top = p;
+            p += size;
+            if( bottom > p )
+                bottom = p;
+        }
+    }
+
+    if( bottom <= top )
+        return 0;
+
+    return bottom - top;
+}
+
 bool Group::contains( int x0, int y0 ) const
 {
     inner( x0, y0 );
@@ -306,27 +470,14 @@ Active::Active( const Active& other ) : Object(), hovered( other.hovered )
 Active::~Active()
 {}
 
-ActiveGroup::ActiveGroup() : Group(), Active(), target( nullptr )
+ActiveGroup::ActiveGroup() : Group(), Active()
 {}
 
-ActiveGroup::ActiveGroup( const ActiveGroup& other ) : Object(), Group( other ), Active( other ), target( nullptr )
+ActiveGroup::ActiveGroup( const ActiveGroup& other ) : Object(), Group( other ), Active( other )
 {}
 
 ActiveGroup::~ActiveGroup()
 {}
-
-static bool focusIt( Active *& target, Active * active, bool refocus )
-{
-    if( !refocus )
-        return false;
-
-    if( target )
-        target->focus( false );
-
-    target = active;
-    target->focus( true );
-    return true;
-}
 
 bool ActiveGroup::hover( int x0, int y0 )
 {
@@ -347,15 +498,13 @@ bool ActiveGroup::hover( int x0, int y0 )
         }
     }
 
-    bool needFocus = false;
     for( auto active : interactive )
     {
-        if( focusIt( target, active, active->visible && active->hover( x0, y0 ) ) )
-            needFocus = true;
+        if( active->visible && active->hover( x0, y0 ) )
+            return true;
     }
 
-    focus( needFocus );
-    return needFocus;
+    return false;
 }
 
 bool ActiveGroup::click( bool release, int x0, int y0 )
@@ -365,29 +514,23 @@ bool ActiveGroup::click( bool release, int x0, int y0 )
     for( auto i = interactive.rbegin(); i != interactive.rend(); ++i )
     {
         auto& active = * i;
-        if( active->visible && active->contains( x0, y0 ) )
-        {
-            if( focusIt( target, active, active->click( release, x0, y0 ) ) )
-            {
-                focus( true );
-                return true;
-            }
-        }
+        if( active->visible && active->contains( x0, y0 ) && active->click( release, x0, y0 ) )
+            return true;
     }
 
-    focus( false );
     return false;
 }
 
 bool ActiveGroup::input( wchar_t c )
 {
-    bool result = target && target->input( c );
-    focus( result );
-    return result;
-}
+    for( auto active : interactive )
+    {
+        if( active->visible && active->input( c ) )
+            return true;
+    }
 
-void ActiveGroup::focus( bool )
-{}
+    return false;
+}
 
 void ActiveGroup::add( Object *object )
 {
@@ -404,18 +547,6 @@ void ActiveGroup::remove( Object *object )
         interactive.erase( i );
 }
 
-bool ActiveGroup::activeContains( int x0, int y0 ) const
-{
-    inner( x0, y0 );
-
-    for( auto active : interactive )
-    {
-        if( active->visible && active->contains( x0, y0 ) )
-            return true;
-    }
-    return false;
-}
-
 Box::Box() : Object(), w( 0 ), h( 0 )
 {}
 
@@ -424,6 +555,16 @@ Box::Box( const Box& other ) : Object( other )
 
 Box::~Box()
 {}
+
+int Box::width() const
+{
+    return w;
+}
+
+int Box::height() const
+{
+    return h;
+}
 
 bool Box::contains( int x0, int y0 ) const
 {
@@ -462,40 +603,6 @@ static void fill( uint32_t *pixels, int width, int height, uint32_t c, int w, in
         for( int i = x0; i < x1; ++i )
         {
             pixels[j * width + i] = c;
-        }
-    }
-}
-
-static void gradient( uint32_t *pixels, int width, int height, int w, int h, int x, int y )
-{
-    int x0 = x;
-    int y0 = y;
-    int x1 = x + w;
-    int y1 = y + h;
-
-    if( x0 < 0 )
-        x0 = 0;
-    if( y0 < 0 )
-        y0 = 0;
-
-    if( x1 > width )
-        x1 = width;
-    if( y1 > height )
-        y1 = height;
-
-    int gw = x1 - x0;
-
-    for( int j = y0; j < y1; ++j )
-    {
-        for( int i = x0; i < x1; ++i )
-        {
-            int p = i - x0;
-            uint8_t alpha = p * 255 / gw;
-            uint8_t red   = ( ( gw - p ) * 255 ) / gw;
-            uint8_t green = 0;
-            uint8_t blue  = p * 255 / gw;
-
-            pixels[j * width + i] = makeColor( red, green, blue, alpha );
         }
     }
 }
@@ -721,14 +828,19 @@ void StaticText::prepare()
     }
 }
 
+DynamicText *DynamicText::focus = nullptr;
+
 DynamicText::DynamicText() : StaticText(), Active()
 {}
 
-DynamicText::DynamicText( const DynamicText& other ) : Object( other ), StaticText( other ), Active( other ), valid( other.valid ), focused( other.focused ), setCallback( other.setCallback )
+DynamicText::DynamicText( const DynamicText& other ) : Object( other ), StaticText( other ), Active( other ), valid( other.valid ), setCallback( other.setCallback ), focused( other.focused )
 {}
 
 DynamicText::~DynamicText()
-{}
+{
+    if( focus == this )
+        focus = nullptr;
+}
 
 void DynamicText::prepare( bool write )
 {
@@ -757,11 +869,23 @@ bool DynamicText::hover( int, int )
 
 bool DynamicText::click( bool release, int, int )
 {
-    return release;
+    if( release )
+    {
+        if( focus )
+            focus->focused = false;
+        focused = true;
+        focus = this;
+        prepare( false );
+        return true;
+    }
+    return false;
 }
 
 bool DynamicText::input( wchar_t c )
 {
+    if( !focused )
+        return false;
+
     if( c == L'\b' )
     {
         if( !value.empty() )
@@ -772,16 +896,7 @@ bool DynamicText::input( wchar_t c )
         value += c;
     }
     prepare();
-    return false;
-}
-
-void DynamicText::focus( bool f )
-{
-    if( focused != f )
-    {
-        focused = f;
-        prepare( false );
-    }
+    return true;
 }
 
 Combobox::Combobox() : Box(), Active(), option( 0 ), isOpen( false )
@@ -856,14 +971,14 @@ bool Combobox::hover( int x0, int y0 )
         open( false );
     if( isOpen )
         option = select( x0, y0 );
-    return false;
+    return true;
 }
 
 bool Combobox::click( bool release, int, int )
 {
     if( release )
         open( !isOpen );
-    return false;
+    return true;
 }
 
 bool Combobox::input( wchar_t )
@@ -871,13 +986,10 @@ bool Combobox::input( wchar_t )
     return false;
 }
 
-void Combobox::focus( bool )
+Button::Button() : Box(), Active(), wasHovered( false ), off( false )
 {}
 
-Button::Button() : Box(), Active(), wasHovered( false ), activateByHovering( false ), off( false )
-{}
-
-Button::Button( const Button& other ) : Object( other ), Box( other ), Active( other ), wasHovered( false ), activateByHovering( other.activateByHovering ), off( other.off ), use( other.use )
+Button::Button( const Button& other ) : Object( other ), Box( other ), Active( other ), wasHovered( false ), off( other.off ), onHover( other.onHover ), onClick( other.onClick )
 {}
 
 Button::~Button()
@@ -885,27 +997,27 @@ Button::~Button()
 
 bool Button::hover( int, int )
 {
-    if( activateByHovering && !off && use && wasHovered != hovered )
-        use( hovered );
+    bool result = false;
+    if( !off && onHover && wasHovered != hovered )
+        result = onHover( hovered );
 
     wasHovered = hovered;
-    return false;
+    return result;
 }
 
 bool Button::click( bool release, int, int )
 {
-    if( !activateByHovering && !off && use )
-        use( release );
-    return false;
+    bool result = false;
+    if( !off && onClick )
+        result = onClick( release );
+
+    return result;
 }
 
 bool Button::input( wchar_t )
 {
     return false;
 }
-
-void Button::focus( bool )
-{}
 
 ActiveTrigger::ActiveTrigger() : Button()
 {}
@@ -949,7 +1061,7 @@ void TextButton::draw( uint32_t *pixels, int width, int height, int dx, int dy )
 
     text.draw( pixels, width, height, dx, dy );
 
-    if( activateByHovering )
+    if( onHover )
     {
         drawLineRD( pixels, width, height, dx + w - 16, dy + 4, 4, text.color );
         drawLineRU( pixels, width, height, dx + w - 16, dy + h - 5, 4, text.color );
@@ -1049,10 +1161,14 @@ PlusButton::~PlusButton()
 
 void PlusButton::setDefaultCallback()
 {
-    use = [this]( bool release )
+    onClick = [this]( bool release )
     {
         if( release )
+        {
             toggle = !toggle;
+            return true;
+        }
+        return false;
     };
 }
 
@@ -1112,10 +1228,9 @@ Node::Node( ActionData &d, Node *r, bool f ) : data( d ), root( r ), id( -1 )
     add( &button );
     add( &wrapper );
 
-    button.use = [this]( bool release )
+    button.onClick = [this]( bool release )
     {
         auto path = getPath();
-
         if( release )
         {
             if( path == data.path )
@@ -1132,6 +1247,7 @@ Node::Node( ActionData &d, Node *r, bool f ) : data( d ), root( r ), id( -1 )
             data.path = std::move( path );
             data.action = Action::None;
         }
+        return true;
     };
 
     space.x = 0;
@@ -1139,7 +1255,7 @@ Node::Node( ActionData &d, Node *r, bool f ) : data( d ), root( r ), id( -1 )
     space.w = 128;
     space.h = 4;
 
-    space.use = [this]( bool release )
+    space.onClick = [this]( bool release )
     {
         if( release && data.path )
         {
@@ -1154,6 +1270,7 @@ Node::Node( ActionData &d, Node *r, bool f ) : data( d ), root( r ), id( -1 )
         {
             data.action = Action::None;
         }
+        return true;
     };
 
     wrapper.visible = button.toggle = f;
@@ -1310,6 +1427,9 @@ std::shared_ptr<Node> Node::detach()
     return result;
 }
 
+Scroller::Scroller() : content( nullptr )
+{}
+
 ChangedValue<bool> &Keys::letter( char symbol )
 {
     makeException( 'A' <= symbol && symbol <= 'Z' );
@@ -1354,7 +1474,7 @@ OutputData::OutputData( GraphicInterface::Window &desc ) : image( desc.content )
 {}
 
 Window::Window( int th, int sz, int bh, int tgw, int b )
-    : titlebarHeight( th ), buttonSize( sz ), buttonSpacingH( bh ), triggerWidth( tgw ), borderWidth( b )
+    : titlebarHeight( th ), buttonSize( sz ), buttonSpacingH( bh ), triggerWidth( tgw ), borderWidth( b ), minimized( false )
 {
     buttonSpacingV = ( titlebarHeight - buttonSize ) / 2;
 
@@ -1389,9 +1509,9 @@ Window::Window( const Window &other ) :
     icon( other.icon ), content( other.content ), title( other.title ),
     minimizeButton( other.minimizeButton ), maximizeButton( other.maximizeButton ), closeButton( other.closeButton )
 {
-    minimizeButton.use = nullptr;
-    maximizeButton.use = nullptr;
-    closeButton.use = nullptr;
+    minimizeButton.onClick = nullptr;
+    maximizeButton.onClick = nullptr;
+    closeButton.onClick = nullptr;
 
     add( &self );
     add( &client );
@@ -1439,10 +1559,20 @@ void Window::update()
     titleBar.w = self.w;
     titleBar.h = titlebarHeight + borderWidth;
 
+    leftTrigger.x = self.x;
+    leftTrigger.y = self.y;
+    leftTrigger.w = triggerWidth;
+    leftTrigger.h = self.h;
+
     rightTrigger.x = self.x + self.w - triggerWidth;
     rightTrigger.y = self.y;
     rightTrigger.w = triggerWidth;
     rightTrigger.h = self.h;
+
+    topTrigger.x = self.x;
+    topTrigger.y = self.y;
+    topTrigger.w = self.w;
+    topTrigger.h = triggerWidth;
 
     bottomTrigger.x = self.x;
     bottomTrigger.y = self.y + self.h - triggerWidth;
@@ -1530,10 +1660,9 @@ void Window::update()
     mouseTrigger.place( content );
 }
 
-void Window::run()
+bool Window::run( bool lock )
 {
-    GenericWindow g( *this );
-    g.run();
+    return GenericWindow::create( *this, lock );
 }
 
 uint32_t makeColor( uint8_t r, uint8_t g, uint8_t b, uint8_t a )
@@ -1559,6 +1688,11 @@ uint8_t getB( uint32_t color )
 uint8_t getA( uint32_t color )
 {
     return ( color >> 24 ) & 0xff;
+}
+
+bool noWindows()
+{
+    return GenericWindow::count() == 0;
 }
 }
 
@@ -1595,10 +1729,14 @@ Settings::Settings( std::wstring tl, const Parameters& parameters )
             object->w = width;
             object->h = height;
 
-            object->use = [s = value.set]( bool release )
+            object->onClick = [s = value.set]( bool release )
             {
                 if( release )
+                {
                     s( L"released" );
+                    return true;
+                }
+                return false;
             };
             return;
         }
@@ -1710,29 +1848,37 @@ Popup::Popup( Type t, std::wstring tl, std::wstring inf ) : type( t )
     {
         buttons.push_back( &yesButton );
         yesButton.desc = L"yes";
-        yesButton.use = [this]( bool release )
+        yesButton.onClick = [this]( bool release )
         {
             if( release )
+            {
                 answer = true;
-            closeButton.use( release );
+                closeButton.onClick( release );
+                return true;
+            }
+            return false;
         };
 
         buttons.push_back( &noButton );
         noButton.desc = L"no";
-        noButton.use = [this]( bool release )
+        noButton.onClick = [this]( bool release )
         {
             if( release )
+            {
                 answer = false;
-            closeButton.use( release );
+                closeButton.onClick( release );
+                return true;
+            }
+            return false;
         };
     }
     else
     {
         buttons.push_back( &cancelButton );
         cancelButton.desc = L"ok";
-        cancelButton.use = [this]( bool release )
+        cancelButton.onClick = [this]( bool release )
         {
-            closeButton.use( release );
+            return closeButton.onClick( release );
         };
     }
 
@@ -1810,7 +1956,6 @@ static std::shared_ptr<GraphicInterface::ActiveGroup> sidedrop(
 
     trigger->x = x - 1;
     trigger->y = y;
-    trigger->activateByHovering = true;
 
     for( auto& p : parameters )
     {
@@ -1840,13 +1985,15 @@ static std::shared_ptr<GraphicInterface::ActiveGroup> sidedrop(
 
         if( p.parameters.empty() && p.callback )
         {
-            button->use = [&root, callback = p.callback]( bool release )
+            button->onClick = [&root, callback = p.callback]( bool release )
             {
                 if( release )
                 {
                     callback();
-                    root.closeButton.use( true );
+                    root.closeButton.onClick( true );
+                    return true;
                 }
+                return false;
             };
         }
 
@@ -1864,21 +2011,23 @@ static std::shared_ptr<GraphicInterface::ActiveGroup> sidedrop(
                 maxY = nextY;
 
             // Sub-menu
-            button->activateByHovering = true;
-            button->use = [next = subMenu.get()]( bool inside )
+            button->onHover = [next = subMenu.get()]( bool inside )
             {
                 if( inside )
                 {
                     next->visible = true;
+                    return true;
                 }
-                else if( !next->hovered )
+                if( !next->hovered )
                 {
                     next->visible = false;
+                    return true;
                 }
+                return false;
             };
         }
 
-        button->off = button->off && button->use;
+        button->off = button->off && button->onHover;
 
         y += button->h;
         root.storage.push_back( button );
@@ -1887,17 +2036,19 @@ static std::shared_ptr<GraphicInterface::ActiveGroup> sidedrop(
 
     trigger->w = width + 1;
     trigger->h = y - trigger->y;
-    trigger->use = [&root, rootMenu, self = menu.get()]( bool inside )
+    trigger->onHover = [&root, rootMenu, self = menu.get()]( bool inside )
     {
         if( inside )
         {
             if( rootMenu )
+            {
                 rootMenu->visible = true;
+                return true;
+            }
+            return false;
         }
-        else
-        {
-            self->visible = false;
-        }
+        self->visible = false;
+        return false;
     };
 
     if( x < maxX )
@@ -1923,35 +2074,39 @@ bool ContextMenu::hover( int x0, int y0 )
     auto result = ActiveGroup::hover( x0, y0 );
     if( !hovered )
     {
-        closeButton.use( true );
-        return false;
+        closeButton.onClick( true );
+        return true;
     }
     return result;
+}
+
+int ContextMenu::minWidth() const
+{
+    return 0;
+}
+
+int ContextMenu::minHeight() const
+{
+    return 0;
 }
 
 void ContextMenu::update()
 {}
 
-void ContextMenu::run()
+bool ContextMenu::run( bool lock )
 {
     if( storage.empty() )
-        return;
-
-    self.w = GetSystemMetrics( SM_CXSCREEN );
-    self.h = GetSystemMetrics( SM_CYSCREEN );
-
-    client.place( self );
-    client.color = GraphicInterface::makeColor( 0, 0, 0, 1 );
+        return true;
 
     POINT p;
     if( !GetCursorPos( &p ) )
-        return;
+        return true;
 
     storage[0]->visible = true;
     storage[0]->x = p.x;
     storage[0]->y = p.y;
 
-    Window::run();
+    return Window::run( lock );
 }
 
 FileManager::FileManager( bool write )
@@ -1960,63 +2115,65 @@ FileManager::FileManager( bool write )
     confirm.desc = write ? L"Save" : L"Open";
     if( write )
     {
-        confirm.use = [this]( bool release )
+        confirm.onClick = [this]( bool release )
         {
             if( !release )
-                return;
+                return false;
 
-            std::filesystem::path candidate = file.value;
-            if( std::filesystem::exists( candidate ) )
+            if( std::filesystem::exists( file.value ) )
             {
-                if( std::filesystem::is_regular_file( candidate ) )
+                if( std::filesystem::is_regular_file( file.value ) )
                 {
-                    Popup question( Popup::Type::Question, confirm.desc + L" file", L"File already exists, do you want to overwrite it?" );
-                    question.run();
-                    if( question.answer && *question.answer )
+                    auto& question = popup.emplace( Popup::Type::Question, confirm.desc + L" file", L"File already exists, do you want to overwrite it?" );
+                    question.onClose = [this, &question]()
                     {
-                        choice = candidate;
-                        closeButton.use( true );
-                    }
+                        if( question.answer && *question.answer )
+                        {
+                            choice = file.value;
+                            closeButton.onClick( true );
+                        }
+                    };
+                    question.run();
                 }
                 else
                 {
-                    Popup warning( Popup::Type::Warning, confirm.desc + L" file", L"It's not a file." );
-                    warning.run();
+                    popup.emplace( Popup::Type::Warning, confirm.desc + L" file", L"It's not a file." ).run();
                 }
             }
             else
             {
-                choice = candidate;
-                closeButton.use( true );
+                choice = file.value;
+                closeButton.onClick( true );
             }
+            return true;
         };
     }
     else
     {
-        confirm.use = [this]( bool release )
+        confirm.onClick = [this]( bool release )
         {
             if( !release )
-                return;
+                return false;
 
             std::filesystem::path candidate = file.value;
             if( std::filesystem::exists( candidate ) && std::filesystem::is_regular_file( candidate ) )
             {
                 choice = candidate;
-                closeButton.use( true );
+                closeButton.onClick( true );
             }
             else
             {
-                Popup warning( Popup::Type::Warning, confirm.desc + L" file", L"File with such path does not exist." );
-                warning.run();
+                popup.emplace( Popup::Type::Warning, confirm.desc + L" file", L"File with such path does not exist." ).run();
             }
+            return true;
         };
     }
 
     add( &reject );
     reject.desc = L"Cancel";
-    reject.use = [this]( bool release )
+    reject.onClick = [this]( bool release )
     {
-        closeButton.use( release );
+        return closeButton.onClick( release );
     };
 
     self.w = 512;
@@ -2055,25 +2212,27 @@ void FileManager::select()
 
         if( std::filesystem::is_directory( path ) )
         {
-            button->use = [this, p = path.lexically_normal()]( bool release )
+            button->onClick = [this, p = path.lexically_normal()]( bool release )
             {
                 if( !release )
-                    return;
+                    return false;
 
                 root = p;
                 file.value = p.wstring();
                 file.prepare();
+                return true;
             };
         }
         else if( std::filesystem::is_regular_file( path ) )
         {
-            button->use = [this, p = path.lexically_normal()]( bool release )
+            button->onClick = [this, p = path.lexically_normal()]( bool release )
             {
                 if( !release )
-                    return;
+                    return false;
 
                 file.value = p.wstring();
                 file.prepare( true );
+                return true;
             };
         }
     };
@@ -2094,7 +2253,7 @@ void FileManager::select()
             }
             else
             {
-                Popup( Popup::Type::Error, L"Error", L"Failed to get list of drives." ).run();
+                popup.emplace( Popup::Type::Error, L"Error", L"Failed to get list of drives." ).run();
             }
         }
         else
@@ -2106,15 +2265,15 @@ void FileManager::select()
     }
     catch( const Exception &e )
     {
-        Popup( Popup::Type::Error, L"Error", e.message() ).run();
+        popup.emplace( Popup::Type::Error, L"Error", e.message() ).run();
     }
     catch( const std::exception &e )
     {
-        Popup( Popup::Type::Error, L"Error", Exception::extract( e.what() ) ).run();
+        popup.emplace( Popup::Type::Error, L"Error", Exception::extract( e.what() ) ).run();
     }
     catch( ... )
     {
-        Popup( Popup::Type::Error, L"Error", L"Program failed!" ).run();
+        popup.emplace( Popup::Type::Error, L"Error", L"Program failed!" ).run();
     }
 
     root.reset();
@@ -2156,20 +2315,6 @@ void FileManager::update()
         path->h = ph;
         py += ph + 8;
     }
-}
-
-std::optional<std::filesystem::path> savePath()
-{
-    FileManager fm( true );
-    fm.run();
-    return fm.choice;
-}
-
-std::optional<std::filesystem::path> openPath()
-{
-    FileManager fm( false );
-    fm.run();
-    return fm.choice;
 }
 
 Hierarchy::Hierarchy( const GraphicInterface::Node::Parameter& p ) : root( data, p )
@@ -2228,10 +2373,42 @@ void Hierarchy::update()
     root.y = client.y + 8;
 }
 
-static void updateWindowContent( GraphicInterface::Window &desc, HWND hwnd )
+static void filePath( std::function<void( const std::optional<std::filesystem::path>& )> callback, bool save )
+{
+    static std::vector<std::shared_ptr<FileManager>> fms;
+    auto& fm = *fms.emplace_back( std::make_shared<FileManager>( save ) );
+    fm.onClose = [&fm, call = std::move( callback )]()
+    {
+        call( fm.choice );
+
+        auto i = fms.begin();
+        while( i != fms.end() )
+        {
+            if( i->get() == &fm )
+            {
+                fms.erase( i );
+                break;
+            }
+            ++i;
+        }
+    };
+    fm.run();
+}
+
+void savePath( std::function<void( const std::optional<std::filesystem::path>& )> callback )
+{
+    filePath( std::move( callback ), true );
+}
+
+void openPath( std::function<void( const std::optional<std::filesystem::path>& )> callback )
+{
+    filePath( std::move( callback ), false );
+}
+
+void GenericWindow::update()
 {
     RECT rect;
-    GetWindowRect( hwnd, &rect );
+    GetWindowRect( hndwnd, &rect );
 
     auto width = rect.right - rect.left;
     auto height = rect.bottom - rect.top;
@@ -2257,21 +2434,22 @@ static void updateWindowContent( GraphicInterface::Window &desc, HWND hwnd )
     }
     HBITMAP hOldBmp = ( HBITMAP )SelectObject( hdcMem, hBitmap );
 
-    desc.self.w = width;
-    desc.self.h = height;
-    desc.update();
-
     auto *pixels = ( uint32_t * )pBits;
-    desc.draw( pixels, width, height, -desc.x, -desc.y );
+    for( auto& sample : stack )
+    {
+        auto& desc = sample.window->desc;
+        desc.update();
+        desc.draw( pixels, width, height, 0, 0 );
+    }
 
     BLENDFUNCTION blend;
     clear( &blend, sizeof( blend ) );
     blend.BlendOp = AC_SRC_OVER;
-    blend.SourceConstantAlpha = 255; // Use per-pixel alpha.
+    blend.SourceConstantAlpha = 255;
     blend.AlphaFormat = AC_SRC_ALPHA;
     POINT ptZero = {0, 0};
     SIZE sizeWindow = {width, height};
-    UpdateLayeredWindow( hwnd, hdcScreen, nullptr, &sizeWindow, hdcMem, &ptZero, 0, &blend, ULW_ALPHA );
+    UpdateLayeredWindow( hndwnd, hdcScreen, nullptr, &sizeWindow, hdcMem, &ptZero, 0, &blend, ULW_ALPHA );
 
     SelectObject( hdcMem, hOldBmp );
     DeleteObject( hBitmap );
@@ -2279,351 +2457,300 @@ static void updateWindowContent( GraphicInterface::Window &desc, HWND hwnd )
     ReleaseDC( nullptr, hdcScreen );
 }
 
-class GenericWindow::Implementation
+size_t GenericWindow::count()
 {
-public:
-    GenericWindow *window;
-
-    std::wstring className;
-    ATOM windowClass;
-    HWND hwnd;
-
-    Implementation( WNDPROC windowProc, GenericWindow *w ) : window( w )
-    {
-        static long long unsigned index = 0;
-
-        className = L"GenericWindowWinApiImplementation" + std::to_wstring( index++ );
-
-        WNDCLASSEXW wc;
-        clear( &wc, sizeof( wc ) );
-        wc.cbSize = sizeof( wc );
-        wc.style = CS_HREDRAW | CS_VREDRAW;
-        wc.lpfnWndProc = windowProc;
-        wc.hInstance = GetModuleHandleW( nullptr );
-        wc.hCursor = LoadCursorW( nullptr, IDC_ARROW );
-        wc.hbrBackground = ( HBRUSH )( COLOR_WINDOW + 1 );
-        wc.lpszClassName = className.c_str();
-
-        windowClass = RegisterClassExW( &wc );
-        makeException( windowClass );
-
-        hwnd = nullptr;
-    }
-
-    ~Implementation()
-    {
-        UnregisterClassW( className.c_str(), GetModuleHandleW( nullptr ) );
-    }
-};
+    return stack.size();
+}
 
 std::vector<GenericWindow::Data> GenericWindow::stack;
+GenericWindow *GenericWindow::active = nullptr;
+bool GenericWindow::needCleanup = false;
+HWND GenericWindow::hndwnd = nullptr;
 
 GenericWindow::GenericWindow( GraphicInterface::Window &d ) : outputData( d ), desc( d )
 {
-    implementation = nullptr;
+    desc.closeButton.onClick = [this]( bool release )
+    {
+        if( release )
+        {
+            close();
+            return true;
+        }
+        return false;
+    };
 
+    desc.maximizeButton.onClick = [this]( bool release )
+    {
+        if( release )
+        {
+            maximize();
+            return true;
+        }
+        return false;
+    };
+
+    desc.minimizeButton.onClick = [this]( bool release )
+    {
+        if( release )
+        {
+            minimize();
+            return true;
+        }
+        return false;
+    };
+
+    originalX = originalY = originalW = originalH = 0;
+    maximized = false;
+}
+
+GenericWindow::~GenericWindow()
+{
+    desc.closeButton.onClick = nullptr;
+    desc.maximizeButton.onClick = nullptr;
+    desc.minimizeButton.onClick = nullptr;
+}
+
+bool GenericWindow::create( GraphicInterface::Window &desc, bool lock )
+{
     // This code is positioned in lambda to accesses private members of GenericWindow
     auto windowProc = []( HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam ) -> LRESULT
     {
-        Implementation *impl;
-        GenericWindow *window;
-        GraphicInterface::Window *dsc;
+        static bool left = false, right = false, top = false, bottom = false;
+        static GenericWindow *moving = nullptr, *scaling = nullptr;
+        static POINT pin;
 
-        auto getData = [hwnd, &impl, &window, &dsc]()
+        struct Cursors
         {
-            impl = ( Implementation * )GetWindowLongPtr( hwnd, GWLP_USERDATA );
-            if( impl )
-            {
-                window = impl->window;
-                dsc = &window->desc;
-            }
-            else
-            {
-                window = nullptr;
-                dsc = nullptr;
-            }
+            HCURSOR arrow = nullptr;
+            HCURSOR sizeHor = nullptr;
+            HCURSOR sizeVer = nullptr;
+            HCURSOR sizePD = nullptr;
+            HCURSOR sizeSD = nullptr;
+            HCURSOR sizeAll = nullptr;
+            HCURSOR custom = nullptr;
         };
 
-        getData();
-
-        auto inputReset = [&window]()
-        {
-            window->inputReset();
-        };
-
-        auto inputRelease = [&window]()
-        {
-            window->inputRelease();
-        };
-
-        auto quit = [hwnd]()
-        {
-            DestroyWindow( hwnd );
-        };
-
-        auto getPos = [hwnd]( int &x, int &y )
-        {
-            POINT point;
-            GetCursorPos( &point );
-            x = point.x;
-            y = point.y;
-        };
-
-        auto handle = [&]()
-        {
-            try
-            {
-                if( dsc->handleMsg )
-                    dsc->handleMsg( window->inputData, window->outputData );
-            }
-            catch( const Exception &e )
-            {
-                Popup( Popup::Type::Error, L"Error", e.message() ).run();
-                quit();
-                return;
-            }
-            catch( const std::exception &e )
-            {
-                Popup( Popup::Type::Error, L"Error", Exception::extract( e.what() ) ).run();
-                quit();
-                return;
-            }
-            catch( ... )
-            {
-                Popup( Popup::Type::Error, L"Error", L"Program failed!" ).run();
-                quit();
-                return;
-            }
-
-            if( window->outputData.quit )
-            {
-                quit();
-                return;
-            }
-
-            inputReset();
-
-            auto &img = window->outputData.image;
-            if( img.changed() )
-            {
-                updateWindowContent( *dsc, hwnd );
-                img.reset();
-            }
-
-            window->inputData.init = false;
-        };
+        static Cursors cursors;
 
         switch( message )
         {
         case WM_CREATE:
-            SetWindowLongPtr( hwnd, GWLP_USERDATA, ( LONG_PTR )( ( LPCREATESTRUCT )lParam )->lpCreateParams );
-            getData();
-            window->inputData.init = true;
-            handle();
+            {
+                cursors.arrow   = LoadCursorW( nullptr, IDC_ARROW );
+                cursors.sizeHor = LoadCursorW( nullptr, IDC_SIZEWE );
+                cursors.sizeVer = LoadCursorW( nullptr, IDC_SIZENS );
+                cursors.sizePD  = LoadCursorW( nullptr, IDC_SIZENWSE );
+                cursors.sizeSD  = LoadCursorW( nullptr, IDC_SIZENESW );
+                cursors.sizeAll = LoadCursorW( nullptr, IDC_SIZEALL );
+
+                //AND XOR → Result
+                //  0   0 → Black
+                //  0   1 → White
+                //  1   0 → Screen (transparent)
+                //  1   1 → Reverse-screen (invert)
+                // Bytes per row = (width + 7) / 8
+                // Each byte holds 8 pixels
+
+                BYTE andMask[] =
+                {
+                    0xF7, 0x80, 0xF7, 0x80, 0xF7, 0x80, 0xFF, 0xFF, 0x1C, 0x00, 0xFF, 0xFF, 0xF7, 0x80, 0xF7, 0x80, 0xF7, 0x80
+                };
+
+                BYTE xorMask[] =
+                {
+                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xEB, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+                };
+
+                cursors.custom = CreateCursor( nullptr, 4, 4, 9, 9, andMask, xorMask );
+            }
             break;
         case WM_DESTROY:
-            impl->hwnd = nullptr;
-            SetWindowLongPtr( hwnd, GWLP_USERDATA, ( LONG_PTR )nullptr );
-            getData();
-            // PostQuitMessage( 0 );
+            moving = scaling = nullptr;
+            if( cursors.custom )
+            {
+                DestroyCursor( cursors.custom );
+                cursors.custom = nullptr;
+            }
+            PostQuitMessage( 0 );
             return 0;
         case WM_APP:
             break;
-        case WM_NCHITTEST:
-            {
-                int x = LOWORD( lParam ), y = HIWORD( lParam );
-                int x1 = x, y1 = y;
-
-                dsc->inner( x, y );
-
-                bool left   = dsc->leftTrigger.contains( x, y );
-                bool right  = dsc->rightTrigger.contains( x, y );
-                bool top    = dsc->topTrigger.contains( x, y );
-                bool bottom = dsc->bottomTrigger.contains( x, y );
-
-                if( top && left ) return HTTOPLEFT;
-                if( top && right ) return HTTOPRIGHT;
-                if( bottom && left ) return HTBOTTOMLEFT;
-                if( bottom && right ) return HTBOTTOMRIGHT;
-
-                if( left ) return HTLEFT;
-                if( right ) return HTRIGHT;
-                if( top ) return HTTOP;
-                if( bottom ) return HTBOTTOM;
-
-                if( dsc->activeContains( x1, y1 ) )
-                    return HTCLIENT;
-
-                if( dsc->titleBar.contains( x, y ) )
-                    return HTCAPTION;
-
-                return HTCLIENT;
-            }
-        case WM_GETMINMAXINFO:
-            {
-                // Can be launched before WM_CREATE
-                if( dsc )
-                {
-                    MINMAXINFO *p = ( MINMAXINFO * )lParam;
-                    p->ptMinTrackSize.x = dsc->minWidth();
-                    p->ptMinTrackSize.y = dsc->minHeight();
-                    return 0;
-                }
-            }
-            break;
         case WM_KILLFOCUS:
-            inputRelease();
-            inputReset();
+            GenericWindow::killFocus();
             break;
         case WM_SETFOCUS:
-            inputRelease();
-            inputReset();
+            GenericWindow::setFocus();
             break;
         case WM_SETCURSOR:
-            // Set the cursor to the default arrow
-            SetCursor( LoadCursorW( nullptr, IDC_ARROW ) );
-            break;
-        case WM_SIZE:
-            {
-                updateWindowContent( *dsc, hwnd );
-                break;
-            }
-        case WM_MOVE:
-            {
-                RECT rect;
-                GetWindowRect( hwnd, &rect );
-                dsc->x = rect.left;
-                dsc->y = rect.top;
-                break;
-            }
+            return TRUE;
         case WM_PAINT:
             break;
         case WM_NCMOUSEMOVE:
         case WM_MOUSEMOVE:
             {
-                int x, y;
-                getPos( x, y );
+                POINT point;
+                GetCursorPos( &point );
 
-                dsc->hover( x, y );
-
-                dsc->inner( x, y );
-                if( dsc->mouseTrigger.contains( x, y ) )
+                if( moving )
                 {
-                    dsc->mouseTrigger.inner( x, y );
-                    impl->window->inputData.mouseX = x;
-                    impl->window->inputData.mouseY = y;
-                    handle();
+                    moving->desc.x = pin.x + point.x;
+                    moving->desc.y = pin.y + point.y;
+                    GenericWindow::update();
+                    return 0;
                 }
 
-                getData();
-                if( dsc )
-                    updateWindowContent( *dsc, hwnd );
-            }
-            return 0;
-        case WM_LBUTTONDOWN:
-            {
-                int x, y;
-                getPos( x, y );
-
-                dsc->click( false, x, y );
-
-                dsc->inner( x, y );
-                if( dsc->mouseTrigger.contains( x, y ) )
+                if( scaling )
                 {
-                    window->inputData.leftMouse = true;
-                    handle();
+                    if( top )
+                    {
+                        auto height = pin.y - point.y;
+                        auto minHeight = scaling->desc.minHeight();
+                        if( height >= minHeight )
+                        {
+                            scaling->desc.y = point.y;
+                            scaling->desc.self.h = height;
+                        }
+                        else
+                        {
+                            scaling->desc.y = pin.y - minHeight;
+                            scaling->desc.self.h = minHeight;
+                        }
+                    }
+                    if( left )
+                    {
+                        auto width = pin.x - point.x;
+                        auto minWidth = scaling->desc.minWidth();
+                        if( width >= minWidth )
+                        {
+                            scaling->desc.x = point.x;
+                            scaling->desc.self.w = width;
+                        }
+                        else
+                        {
+                            scaling->desc.x = pin.x - minWidth;
+                            scaling->desc.self.w = minWidth;
+                        }
+                    }
+                    if( bottom )
+                    {
+                        auto height = point.y - pin.y;
+                        auto minHeight = scaling->desc.minHeight();
+                        if( height >= minHeight )
+                        {
+                            scaling->desc.self.h = height;
+                        }
+                        else
+                        {
+                            scaling->desc.self.h = minHeight;
+                        }
+                    }
+                    if( right )
+                    {
+                        auto width = point.x - pin.x;
+                        auto minWidth = scaling->desc.minWidth();
+                        if( width >= minWidth )
+                        {
+                            scaling->desc.self.w = width;
+                        }
+                        else
+                        {
+                            scaling->desc.self.w = minWidth;
+                        }
+                    }
+                    GenericWindow::update();
+                    return 0;
                 }
 
-                getData();
-                if( dsc )
-                    updateWindowContent( *dsc, hwnd );
-            }
-            return 0;
-        case WM_LBUTTONUP:
-            {
-                int x, y;
-                getPos( x, y );
+                bool response = GenericWindow::process( [&]( auto & w )
+                {
+                    int x = point.x, y = point.y;
 
-                dsc->click( true, x, y );
+                    w.desc.inner( x, y );
 
-                dsc->inner( x, y );
-                if( dsc->mouseTrigger.contains( x, y ) )
-                {
-                    window->inputData.leftMouse = false;
-                    handle();
-                }
+                    left   = w.desc.leftTrigger.contains( x, y );
+                    right  = w.desc.rightTrigger.contains( x, y );
+                    top    = w.desc.topTrigger.contains( x, y );
+                    bottom = w.desc.bottomTrigger.contains( x, y );
 
-                getData();
-                if( dsc )
-                    updateWindowContent( *dsc, hwnd );
-            }
-            return 0;
-        case WM_RBUTTONDOWN:
-            {
-                int x, y;
-                getPos( x, y );
-                dsc->inner( x, y );
-                if( dsc->mouseTrigger.contains( x, y ) )
-                {
-                    window->inputData.rightMouse = true;
-                    handle();
-                }
-            }
-            return 0;
-        case WM_RBUTTONUP:
-            {
-                int x, y;
-                getPos( x, y );
-                dsc->inner( x, y );
-                if( dsc->mouseTrigger.contains( x, y ) )
-                {
-                    window->inputData.rightMouse = false;
-                    handle();
-                }
-            }
-            return 0;
-        case WM_MBUTTONDOWN:
-            {
-                int x, y;
-                getPos( x, y );
-                dsc->inner( x, y );
-                if( dsc->mouseTrigger.contains( x, y ) )
-                {
-                    window->inputData.middleMouse = true;
-                    handle();
-                }
-            }
-            return 0;
-        case WM_MBUTTONUP:
-            {
-                int x, y;
-                getPos( x, y );
-                dsc->inner( x, y );
-                if( dsc->mouseTrigger.contains( x, y ) )
-                {
-                    impl->window->inputData.middleMouse = false;
-                    handle();
-                }
+                    if( top && left )
+                    {
+                        SetCursor( cursors.sizePD );
+                        return true;
+                    }
+                    if( top && right )
+                    {
+                        SetCursor( cursors.sizeSD );
+                        return true;
+                    }
+                    if( bottom && left )
+                    {
+                        SetCursor( cursors.sizeSD );
+                        return true;
+                    }
+                    if( bottom && right )
+                    {
+                        SetCursor( cursors.sizePD );
+                        return true;
+                    }
+                    if( left )
+                    {
+                        SetCursor( cursors.sizeHor );
+                        return true;
+                    }
+                    if( right )
+                    {
+                        SetCursor( cursors.sizeHor );
+                        return true;
+                    }
+                    if( top )
+                    {
+                        SetCursor( cursors.sizeVer );
+                        return true;
+                    }
+                    if( bottom )
+                    {
+                        SetCursor( cursors.sizeVer );
+                        return true;
+                    }
+                    if( w.desc.hover( point.x, point.y ) )
+                    {
+                        SetCursor( cursors.arrow );
+                        return true;
+                    }
+                    if( w.desc.mouseTrigger.contains( x, y ) )
+                    {
+                        SetCursor( cursors.custom );
+
+                        w.desc.mouseTrigger.inner( x, y );
+                        w.inputData.mouseX = x;
+                        w.inputData.mouseY = y;
+                        return w.handle();
+                    }
+                    SetCursor( cursors.arrow );
+                    return w.desc.self.contains( x, y );
+                } );
+                if( !response )
+                    break;
+
+                GenericWindow::cleanup();
+                GenericWindow::update();
+                return 0;
             }
             return 0;
         case WM_CHAR:
             {
-                auto process = [&]( auto value )
+                auto& p = wParam;
+                if( p == '-' || p == '/' || p == '\\' || p == '+' || p == '.' || p == '_' || p == '\b' || p == ' ' || ( '0' <= p && p <= '9' ) || ( 'a' <= p && p <= 'z' ) || ( 'A' <= p && p <= 'Z' ) )
                 {
-                    if( dsc->input( value ) )
-                        dsc->focus( true );
-                    updateWindowContent( *dsc, hwnd );
-                };
+                    bool response = GenericWindow::process( [&]( auto & w )
+                    {
+                        return w.desc.input( p );
+                    } );
+                    if( !response )
+                        break;
 
-                if( wParam == '-' || wParam == '/' || wParam == '\\' || wParam == '+' || wParam == '.' || wParam == '_' || wParam == '\b' || wParam == ' ' )
-                {
-                    process( wParam );
-                    return 0;
-                }
-
-                if( ( '0' <= wParam && wParam <= '9' ) || ( 'a' <= wParam && wParam <= 'z' ) || ( 'A' <= wParam && wParam <= 'Z' ) )
-                {
-                    process( wParam );
+                    GenericWindow::cleanup();
+                    GenericWindow::update();
                     return 0;
                 }
             }
@@ -2634,165 +2761,223 @@ GenericWindow::GenericWindow( GraphicInterface::Window &d ) : outputData( d ), d
 
         bool pressed = message == WM_KEYDOWN;
         bool pressedSystem = message == WM_SYSKEYDOWN;
-        pressed = pressed || pressedSystem;
 
         bool released = message == WM_KEYUP;
         bool releasedSystem = message == WM_SYSKEYUP;
+
+        bool mouse = false;
+
+        if( message == WM_LBUTTONUP )
+        {
+            wParam = VK_LBUTTON;
+            released = true;
+            mouse = true;
+        }
+        else if( message == WM_RBUTTONUP )
+        {
+            wParam = VK_RBUTTON;
+            released = true;
+            mouse = true;
+        }
+        else if( message == WM_MBUTTONUP )
+        {
+            wParam = VK_MBUTTON;
+            released = true;
+            mouse = true;
+        }
+        else if( message == WM_LBUTTONDOWN )
+        {
+            wParam = VK_LBUTTON;
+            pressed = true;
+            mouse = true;
+        }
+        else if( message == WM_RBUTTONDOWN )
+        {
+            wParam = VK_RBUTTON;
+            pressed = true;
+            mouse = true;
+        }
+        else if( message == WM_MBUTTONDOWN )
+        {
+            wParam = VK_MBUTTON;
+            pressed = true;
+            mouse = true;
+        }
+
+        pressed = pressed || pressedSystem;
         released = released || releasedSystem;
 
         bool system = pressedSystem || releasedSystem;
 
-        if( pressed || released )
+        if( ( pressed || released ) && !system )
         {
-            auto &input = window->inputData;
-            switch( wParam )
+            POINT point;
+            GetCursorPos( &point );
+
+            if( mouse && released )
             {
-            case VK_UP:
-                if( !system )
-                {
-                    input.up = pressed;
-                    handle();
+                if( GenericWindow::focus( point.x, point.y ) )
                     return 0;
-                }
-                break;
-            case VK_DOWN:
-                if( !system )
-                {
-                    input.down = pressed;
-                    handle();
-                    return 0;
-                }
-                break;
-            case VK_LEFT:
-                if( !system )
-                {
-                    input.left = pressed;
-                    handle();
-                    return 0;
-                }
-                break;
-            case VK_RIGHT:
-                if( !system )
-                {
-                    input.right = pressed;
-                    handle();
-                    return 0;
-                }
-                break;
-            case VK_ESCAPE:
-                if( !system )
-                {
-                    input.escape = pressed;
-                    handle();
-                    return 0;
-                }
-                break;
-            case VK_DELETE:
-                if( !system )
-                {
-                    input.del = pressed;
-                    handle();
-                    return 0;
-                }
-                break;
-            case VK_CONTROL:
-                if( !system )
-                {
-                    input.ctrl = pressed;
-                    handle();
-                    return 0;
-                }
-                break;
-            case VK_SHIFT:
-                if( !system )
-                {
-                    input.shift = pressed;
-                    handle();
-                    return 0;
-                }
-                break;
-            case VK_SPACE:
-                if( !system )
-                {
-                    input.space = pressed;
-                    handle();
-                    return 0;
-                }
-                break;
-            case VK_RETURN:
-                if( !system )
-                {
-                    input.enter = pressed;
-                    handle();
-                    return 0;
-                }
-                break;
-            case VK_F1:
-                if( !system )
-                {
-                    input.f1 = pressed;
-                    handle();
-                    return 0;
-                }
-            default:
-                break;
             }
 
-            if( !system )
+            bool response = GenericWindow::process( [&]( auto & w )
             {
+                auto &input = w.inputData;
+                switch( wParam )
+                {
+                case VK_LBUTTON:
+                    {
+                        if( pressed )
+                        {
+                            int x = point.x, y = point.y;
+                            w.desc.inner( x, y );
+
+                            if( top || left || bottom || right )
+                            {
+                                scaling = &w;
+                                pin.x = w.desc.x + w.desc.self.x;
+                                pin.y = w.desc.y + w.desc.self.y;
+                                if( top )
+                                    pin.y += w.desc.self.h;
+                                if( left )
+                                    pin.x += w.desc.self.w;
+                                SetCapture( hndwnd );
+                                return true;
+                            }
+
+                            if( w.desc.titleBar.contains( x, y ) && !w.desc.minimizeButton.contains( x, y ) && !w.desc.maximizeButton.contains( x, y ) && !w.desc.closeButton.contains( x, y ) )
+                            {
+                                moving = &w;
+                                pin.x = w.desc.x - point.x;
+                                pin.y = w.desc.y - point.y;
+                                SetCapture( hndwnd );
+                                return true;
+                            }
+
+                            if( w.desc.click( false, point.x, point.y ) )
+                                return true;
+
+                            if( w.desc.mouseTrigger.contains( x, y ) )
+                            {
+                                w.inputData.leftMouse = true;
+                                return w.handle();
+                            }
+                        }
+                        else
+                        {
+                            if( moving )
+                            {
+                                moving = nullptr;
+                                ReleaseCapture();
+                                return true;
+                            }
+
+                            if( scaling )
+                            {
+                                scaling = nullptr;
+                                ReleaseCapture();
+                                return true;
+                            }
+
+                            int x = point.x, y = point.y;
+
+                            if( w.desc.click( true, x, y ) )
+                                return true;
+
+                            w.desc.inner( x, y );
+                            if( w.desc.mouseTrigger.contains( x, y ) )
+                            {
+                                w.inputData.leftMouse = false;
+                                return w.handle();
+                            }
+                        }
+                    }
+                    return false;
+                case VK_RBUTTON:
+                    {
+                        int x = point.x, y = point.y;
+                        w.desc.inner( x, y );
+                        if( w.desc.mouseTrigger.contains( x, y ) )
+                        {
+                            w.inputData.rightMouse = pressed;
+                            return w.handle();
+                        }
+                    }
+                    return false;
+                case VK_MBUTTON:
+                    {
+                        int x = point.x, y = point.y;
+                        w.desc.inner( x, y );
+                        if( w.desc.mouseTrigger.contains( x, y ) )
+                        {
+                            w.inputData.middleMouse = pressed;
+                            return w.handle();
+                        }
+                    }
+                    return false;
+                case VK_UP:
+                    input.up = pressed;
+                    return w.handle();
+                case VK_DOWN:
+                    input.down = pressed;
+                    return w.handle();
+                case VK_LEFT:
+                    input.left = pressed;
+                    return w.handle();
+                case VK_RIGHT:
+                    input.right = pressed;
+                    return w.handle();
+                case VK_ESCAPE:
+                    input.escape = pressed;
+                    return w.handle();
+                case VK_DELETE:
+                    input.del = pressed;
+                    return w.handle();
+                case VK_CONTROL:
+                    input.ctrl = pressed;
+                    return w.handle();
+                case VK_SHIFT:
+                    input.shift = pressed;
+                    return w.handle();
+                case VK_SPACE:
+                    input.space = pressed;
+                    return w.handle();
+                case VK_RETURN:
+                    input.enter = pressed;
+                    return w.handle();
+                case VK_F1:
+                    input.f1 = pressed;
+                    return w.handle();
+                default:
+                    break;
+                }
+
                 if( 'A' <= wParam && wParam <= 'Z' )
                 {
-                    auto &key = window->inputData.keys.letter( wParam );
+                    auto &key = input.keys.letter( wParam );
                     key = pressed;
-                    handle();
-                    return 0;
+                    return w.handle();
                 }
 
                 if( '0' <= wParam && wParam <= '9' )
                 {
-                    auto &key = window->inputData.keys.digit( wParam - '0' );
+                    auto &key = input.keys.digit( wParam - '0' );
                     key = pressed;
-                    handle();
-                    return 0;
+                    return w.handle();
                 }
+
+                return false;
+            } );
+            if( response )
+            {
+                GenericWindow::cleanup();
+                GenericWindow::update();
+                return 0;
             }
         }
 
         return DefWindowProc( hwnd, message, wParam, lParam );
     };
-
-    implementation = new Implementation( windowProc, this );
-
-    desc.closeButton.use = [this]( bool release )
-    {
-        if( release )
-            close();
-    };
-
-    desc.maximizeButton.use = [this]( bool release )
-    {
-        if( release )
-            maximize();
-    };
-
-    desc.minimizeButton.use = [this]( bool release )
-    {
-        if( release )
-            minimize();
-    };
-}
-
-GenericWindow::~GenericWindow()
-{
-    desc.closeButton.use = nullptr;
-    desc.maximizeButton.use = nullptr;
-    desc.minimizeButton.use = nullptr;
-    delete implementation;
-}
-
-void GenericWindow::run( bool lock )
-{
-    auto lastWindow = GetForegroundWindow();
 
     if( desc.x < 0 || desc.y < 0 || desc.self.w < desc.minWidth() || desc.self.h < desc.minHeight() )
     {
@@ -2815,49 +3000,154 @@ void GenericWindow::run( bool lock )
         desc.self.h = height;
     }
 
-    stack.push_back( {&desc, lock} );
+    auto& sample = stack.emplace_back( std::make_shared<GenericWindow>( desc ), lock );
+    auto& window = *sample.window;
+    auto& input = window.inputData;
 
-    auto hwnd = implementation->hwnd = CreateWindowExW( WS_EX_LAYERED,
-                                       implementation->className.c_str(), desc.title.value.c_str(),
-                                       WS_POPUP | WS_THICKFRAME | WS_VISIBLE,
-                                       desc.x, desc.y, desc.self.w, desc.self.h,
-                                       nullptr, nullptr, GetModuleHandleW( nullptr ), implementation );
-    makeException( hwnd );
-    updateWindowContent( desc, hwnd );
+    killFocus();
+    active = &window;
 
-    MSG msg;
+    if( hndwnd )
+        return false;
+
+    std::wstring className = L"GenericWindowImplementationWinAPI";
+
+    WNDCLASSEXW wc;
+    clear( &wc, sizeof( wc ) );
+    wc.cbSize = sizeof( wc );
+    wc.style = CS_HREDRAW | CS_VREDRAW;
+    wc.lpfnWndProc = windowProc;
+    wc.hInstance = GetModuleHandleW( nullptr );
+    wc.hCursor = LoadCursorW( nullptr, IDC_ARROW );
+    wc.hbrBackground = ( HBRUSH )( COLOR_WINDOW + 1 );
+    wc.lpszClassName = className.c_str();
+
+    makeException( RegisterClassExW( &wc ) );
+
+    RECT screenRect;
+    GetClientRect( GetDesktopWindow(), &screenRect );
+
+    hndwnd = CreateWindowExW( WS_EX_LAYERED,
+                              className.c_str(), desc.title.value.c_str(), WS_POPUP | WS_VISIBLE,
+                              screenRect.left, screenRect.top, screenRect.right - screenRect.left, screenRect.bottom - screenRect.top,
+                              nullptr, nullptr, GetModuleHandleW( nullptr ), nullptr );
+
+    makeException( hndwnd );
+
+    input.init = true;
+    window.handle();
+    input.init = false;
+
+    update();
+
+    MSG msg = {};
     BOOL result;
-    while( implementation->hwnd && ( result = GetMessageW( &msg, hwnd, 0, 0 ) ) != 0 )
+
+    while( ( result = GetMessageW( &msg, nullptr, 0, 0 ) ) != 0 )
     {
-        makeException( result != -1 );
+        if( result == -1 )
+        {
+            // Error
+            break;
+        }
+
         TranslateMessage( &msg );
         DispatchMessage( &msg );
     }
 
-    stack.pop_back();
+    UnregisterClassW( className.c_str(), GetModuleHandleW( nullptr ) );
 
-    DWORD windowProcessId = 0;
-    GetWindowThreadProcessId( lastWindow, &windowProcessId );
-    if( windowProcessId == GetCurrentProcessId() )
-        SetForegroundWindow( lastWindow );
+    return true;
 }
 
 void GenericWindow::close()
 {
-    DestroyWindow( implementation->hwnd );
+    outputData.quit = true;
+    needCleanup = true;
 }
 
 void GenericWindow::maximize()
 {
-    if( IsZoomed( implementation->hwnd ) )
-        ShowWindow( implementation->hwnd, SW_RESTORE );
+    if( maximized )
+    {
+        desc.x = originalX;
+        desc.y = originalY;
+        desc.self.w = originalW;
+        desc.self.h = originalH;
+        maximized = false;
+    }
     else
-        ShowWindow( implementation->hwnd, SW_MAXIMIZE );
+    {
+        originalX = desc.x;
+        originalY = desc.y;
+        originalW = desc.self.w;
+        originalH = desc.self.h;
+
+        RECT screenRect;
+        GetClientRect( GetDesktopWindow(), &screenRect );
+
+        desc.x = screenRect.left;
+        desc.y = screenRect.top;
+        desc.self.w = screenRect.right - desc.x;
+        desc.self.h = screenRect.bottom - desc.y;
+        maximized = true;
+    }
 }
 
 void GenericWindow::minimize()
 {
-    ShowWindow( implementation->hwnd, SW_MINIMIZE );
+    static int lastX = 0;
+
+    if( desc.minimized )
+    {
+        desc.x = originalX;
+        desc.y = originalY;
+        desc.self.w = originalW;
+        desc.self.h = originalH;
+        desc.minimized = false;
+        desc.update();
+    }
+    else
+    {
+        originalX = desc.x;
+        originalY = desc.y;
+        originalW = desc.self.w;
+        originalH = desc.self.h;
+
+        desc.minimized = true;
+        desc.update();
+
+        RECT screenRect;
+        GetClientRect( GetDesktopWindow(), &screenRect );
+
+        desc.y = screenRect.bottom - desc.titlebarHeight - desc.borderWidth; // desc.self.h
+        desc.x = lastX;
+        lastX += 128;
+    }
+}
+
+bool GenericWindow::handle()
+{
+    if( outputData.quit )
+    {
+        needCleanup = true;
+        return false;
+    }
+
+    bool response = false;
+    if( desc.handleMsg )
+        response = desc.handleMsg( inputData, outputData );
+
+    inputReset();
+
+    auto &img = outputData.image;
+    if( img.changed() )
+    {
+        GenericWindow::update();
+        img.reset();
+    }
+
+    return response;
 }
 
 void GenericWindow::inputReset()
@@ -2897,3 +3187,116 @@ void GenericWindow::inputRelease()
     inputData.middleMouse = false;
     inputData.keys.release();
 }
+
+void GenericWindow::killFocus()
+{
+    if( active )
+    {
+        active->inputRelease();
+        active->inputReset();
+        active = nullptr;
+    }
+}
+
+void GenericWindow::setFocus()
+{
+    killFocus();
+    if( !stack.empty() )
+        active = stack[0].window.get();
+}
+
+bool GenericWindow::focus( int x0, int y0 )
+{
+    size_t i = 0;
+    while( i < stack.size() )
+    {
+        auto& [window, lock] = stack[stack.size() - i - 1];
+        auto& w = *window;
+
+        int x = x0, y = y0;
+        w.desc.inner( x, y );
+
+        if( w.desc.self.contains( x, y ) )
+        {
+            if( active == &w )
+                return false;
+
+            killFocus();
+            active = &w;
+            return true;
+        }
+
+        if( lock )
+            return false;
+
+        ++i;
+    }
+    return false;
+}
+
+bool GenericWindow::process( const std::function<bool( GenericWindow& )> & action )
+{
+    if( !active )
+        return false;
+
+    try
+    {
+        if( action( *active ) )
+            return true;
+    }
+    catch( const Exception &e )
+    {
+        active->popup.emplace( Popup::Type::Error, L"Error", e.message() ).run();
+        return true;
+    }
+    catch( const std::exception &e )
+    {
+        active->popup.emplace( Popup::Type::Error, L"Error", Exception::extract( e.what() ) ).run();
+        return true;
+    }
+    catch( ... )
+    {
+        active->popup.emplace( Popup::Type::Error, L"Error", L"Program failed!" ).run();
+        return true;
+    }
+    return false;
+}
+
+void GenericWindow::cleanup()
+{
+    if( needCleanup )
+    {
+        std::vector<Data> left;
+        std::vector<std::function<void()>> finalizers;
+
+        for( auto& sample : stack )
+        {
+            if( sample.window->outputData.quit )
+            {
+                if( sample.window.get() == active )
+                    active = nullptr;
+                finalizers.emplace_back( sample.window->desc.onClose );
+            }
+            else
+            {
+                left.emplace_back( std::move( sample ) );
+            }
+        }
+
+        stack = std::move( left );
+        if( stack.empty() )
+        {
+            DestroyWindow( hndwnd );
+            hndwnd = nullptr;
+        }
+
+        if( !active )
+            setFocus();
+
+        for( const auto& f : finalizers )
+        {
+            if( f )
+                f();
+        }
+    }
+};

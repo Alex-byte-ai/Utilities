@@ -23,7 +23,10 @@ struct Object
     void inner( int& x, int& y ) const;
     void outer( int& x, int& y ) const;
 
+    virtual int width() const = 0;
+    virtual int height() const = 0;
     virtual bool contains( int x, int y ) const = 0;
+
     virtual void draw( uint32_t *pixels, int width, int height, int x, int y ) const = 0;
 };
 
@@ -33,7 +36,10 @@ struct Group : virtual public Object
     Group( const Group& other );
     virtual ~Group();
 
+    virtual int width() const override;
+    virtual int height() const override;
     virtual bool contains( int x, int y ) const override;
+
     virtual void draw( uint32_t *pixels, int width, int height, int x, int y ) const override;
 
     void add( Object *object );
@@ -51,12 +57,10 @@ struct Active : virtual public Object
 
     bool hovered;
 
-    // These functions return true, if an object needs focus after that action
+    // These functions return true, if event should not be processed by objects after this one
     virtual bool hover( int x, int y ) = 0;
     virtual bool click( bool release, int x, int y ) = 0;
     virtual bool input( wchar_t c ) = 0;
-
-    virtual void focus( bool f ) = 0;
 };
 
 struct ActiveGroup : public Group, public Active
@@ -69,16 +73,11 @@ struct ActiveGroup : public Group, public Active
     virtual bool click( bool release, int x, int y ) override;
     virtual bool input( wchar_t c ) override;
 
-    virtual void focus( bool f ) override;
-
     void add( Object *object );
     void remove( Object *object );
 
-    bool activeContains( int x, int y ) const;
-
 private:
     std::vector<Active*> interactive;
-    Active* target = nullptr;
 };
 
 struct Box : virtual public Object
@@ -89,6 +88,8 @@ struct Box : virtual public Object
 
     int w, h;
 
+    virtual int width() const override;
+    virtual int height() const override;
     virtual bool contains( int x, int y ) const override;
 
     Box& place( const Box& other );
@@ -166,7 +167,7 @@ struct DynamicText : public StaticText, public Active
     DynamicText( const DynamicText& other );
     virtual ~DynamicText();
 
-    bool valid = true, focused = false;
+    bool valid = true;
 
     std::function<bool( std::wstring )> setCallback;
 
@@ -178,7 +179,9 @@ struct DynamicText : public StaticText, public Active
     virtual bool click( bool release, int x, int y ) override;
     virtual bool input( wchar_t c ) override;
 
-    virtual void focus( bool f ) override;
+private:
+    bool focused = false;
+    static DynamicText *focus;
 };
 
 struct Combobox : public Box, public Active
@@ -200,8 +203,6 @@ struct Combobox : public Box, public Active
     virtual bool hover( int x, int y ) override;
     virtual bool click( bool release, int x, int y ) override;
     virtual bool input( wchar_t c ) override;
-
-    virtual void focus( bool f ) override;
 };
 
 struct Button : public Box, public Active
@@ -210,14 +211,12 @@ struct Button : public Box, public Active
     Button( const Button& other );
     virtual ~Button();
 
-    bool wasHovered, activateByHovering, off;
-    std::function<void( bool )> use;
+    bool wasHovered, off;
+    std::function<bool( bool )> onHover, onClick;
 
     virtual bool hover( int x, int y ) override;
     virtual bool click( bool release, int x, int y ) override;
     virtual bool input( wchar_t c ) override;
-
-    virtual void focus( bool f ) override;
 };
 
 struct ActiveTrigger : public Button
@@ -358,11 +357,13 @@ struct Node : virtual public ActiveGroup
     std::shared_ptr<Node> detach();
 };
 
-struct ScrollerContent
-{};
+struct Scroller : public Box, public Active
+{
+    Scroller();
+    Scroller( const Scroller& other ) = delete;
 
-struct Scroller
-{};
+    Object *content;
+};
 
 class Keys
 {
@@ -391,7 +392,7 @@ public:
 
 class OutputData;
 
-using HandleMsg = std::function<void( const InputData &, OutputData & )>;
+using HandleMsg = std::function<bool( const InputData &, OutputData & )>;
 
 struct Window : virtual public ActiveGroup
 {
@@ -401,11 +402,11 @@ struct Window : virtual public ActiveGroup
 
     int titlebarHeight, buttonSize, buttonSpacingH, buttonSpacingV, triggerWidth, borderWidth;
 
-    Trigger self, topTrigger, bottomTrigger, leftTrigger, rightTrigger, mouseTrigger;
+    bool minimized;
 
+    Trigger self, topTrigger, bottomTrigger, leftTrigger, rightTrigger, mouseTrigger;
     Rectangle titleBar, leftBorder, rightBorder, topBorder, bottomBorder, client;
     Image icon, content;
-
     StaticText title;
 
     MinimizeButton minimizeButton;
@@ -413,12 +414,13 @@ struct Window : virtual public ActiveGroup
     CloseButton closeButton;
 
     HandleMsg handleMsg;
+    std::function<void()> onClose;
 
     virtual int minWidth() const;
     virtual int minHeight() const;
     virtual void update();
 
-    void run();
+    bool run( bool lock = true );
 };
 
 class OutputData
@@ -436,6 +438,7 @@ uint8_t getR( uint32_t color );
 uint8_t getG( uint32_t color );
 uint8_t getB( uint32_t color );
 uint8_t getA( uint32_t color );
+bool noWindows();
 }
 
 struct Settings : public GraphicInterface::Window
@@ -531,9 +534,11 @@ public:
 
     virtual bool hover( int x, int y ) override;
 
+    virtual int minWidth() const override;
+    virtual int minHeight() const override;
     virtual void update() override;
 
-    void run();
+    bool run( bool lock = true );
 };
 
 struct FileManager : public GraphicInterface::Window
@@ -545,6 +550,8 @@ struct FileManager : public GraphicInterface::Window
     GraphicInterface::DynamicText file;
     GraphicInterface::TextButton confirm, reject;
 
+    std::optional<Popup> popup;
+
     std::vector<std::shared_ptr<GraphicInterface::TextButton>> paths;
 
     std::optional<std::filesystem::path> root, choice;
@@ -553,9 +560,6 @@ struct FileManager : public GraphicInterface::Window
 
     virtual void update() override;
 };
-
-std::optional<std::filesystem::path> savePath();
-std::optional<std::filesystem::path> openPath();
 
 struct Hierarchy : public GraphicInterface::Window
 {
@@ -572,34 +576,5 @@ struct Hierarchy : public GraphicInterface::Window
     virtual void update() override;
 };
 
-class GenericWindow
-{
-public:
-    GenericWindow( GraphicInterface::Window &desc );
-    ~GenericWindow();
-
-    void run( bool lock = true );
-
-    void close();
-    void maximize();
-    void minimize();
-private:
-    void inputReset();
-    void inputRelease();
-
-    class Implementation;
-    Implementation *implementation;
-
-    GraphicInterface::InputData inputData;
-    GraphicInterface::OutputData outputData;
-    GraphicInterface::Window& desc;
-
-    struct Data
-    {
-        GraphicInterface::Window* window;
-        bool lock;
-    };
-
-    static std::vector<Data> stack;
-
-};
+void savePath( std::function<void( const std::optional<std::filesystem::path>& )> callback );
+void openPath( std::function<void( const std::optional<std::filesystem::path>& )> callback );
