@@ -80,31 +80,31 @@ public:
     [[nodiscard]] bool Decode( const std::vector<uint8_t> &data, size_t &pos );
 
     String();
+    String( String&& other );
+    String( const String& other );
     String( const std::wstring &data );
     String( const std::string &data );
     String( const wchar_t *data );
     String( const char *data );
+    String( wchar_t data );
+    String( char data );
     ~String();
 
-    inline bool operator==( const String &other ) const
-    {
-        return text == other.text;
-    }
+    String& operator=( String&& other );
+    String& operator=( const String& other );
 
-    inline bool operator!=( const String &other ) const
-    {
-        return text != other.text;
-    }
+    short compare( const String &other ) const;
+    bool operator==( const String &other ) const;
+    bool operator!=( const String &other ) const;
+    bool operator<( const String &other ) const;
+    bool operator>( const String &other ) const;
+    bool operator<=( const String &other ) const;
+    bool operator>=( const String &other ) const;
 
-    inline size_t Length() const
-    {
-        return text.size();
-    }
+    String operator+( const String &other ) const;
 
-    inline size_t Empty() const
-    {
-        return text.empty();
-    }
+    size_t Length() const;
+    size_t Empty() const;
 
     // Only clears text.
     void Clear();
@@ -133,15 +133,14 @@ public:
     String &operator<<( const wchar_t *data );
     String &operator<<( const char *data );
 
-    String &operator<<( bool data );
-
+    String &operator<<( wchar_t data );
     String &operator<<( char data );
+
+    String &operator<<( bool data );
 
     // These types are output as numbers
     String &operator<<( signed char data );
     String &operator<<( unsigned char data );
-
-    String &operator<<( wchar_t data );
 
     String &operator<<( short int data );
     String &operator<<( unsigned short int data );

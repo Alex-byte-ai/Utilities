@@ -803,6 +803,14 @@ String::String()
     : showPlus( false ), fixedPoint( true ), pointPrecision( 8 ), base( 10 )
 {}
 
+String::String( String&& other )
+    : showPlus( other.showPlus ), fixedPoint( other.fixedPoint ), pointPrecision( other.pointPrecision ), base( other.base ), baseBase( std::move( other.baseBase ) ), text( std::move( other.text ) )
+{}
+
+String::String( const String& other )
+    : showPlus( other.showPlus ), fixedPoint( other.fixedPoint ), pointPrecision( other.pointPrecision ), base( other.base ), baseBase( other.baseBase ), text( other.text )
+{}
+
 String::String( const std::wstring &data ) : String()
 {
     *this << data;
@@ -823,8 +831,108 @@ String::String( const char *data ) : String()
     *this << data;
 }
 
+String::String( wchar_t data ) : String()
+{
+    *this << data;
+}
+
+String::String( char data ) : String()
+{
+    *this << data;
+}
+
 String::~String()
 {}
+
+String& String::operator=( String&& other )
+{
+    showPlus = other.showPlus;
+    fixedPoint = other.fixedPoint;
+    pointPrecision = other.pointPrecision;
+    base = other.base;
+    baseBase = std::move( other.baseBase );
+    text = std::move( other.text );
+    return*this;
+}
+
+String& String::operator=( const String& other )
+{
+    showPlus = other.showPlus;
+    fixedPoint = other.fixedPoint;
+    pointPrecision = other.pointPrecision;
+    base = other.base;
+    baseBase = other.baseBase;
+    text = other.text;
+    return*this;
+}
+
+short String::compare( const String &other ) const
+{
+    size_t l = Length();
+
+    if( l < other.Length() )
+        return -1;
+
+    if( l > other.Length() )
+        return 1;
+
+    for( size_t i = 0; i < l; ++i )
+    {
+        if( text[i] < other.text[i] )
+            return -1;
+        if( text[i] > other.text[i] )
+            return 1;
+    }
+
+    return 0;
+}
+
+bool String::operator==( const String &other ) const
+{
+    return compare( other ) == 0;
+}
+
+bool String::operator!=( const String &other ) const
+{
+    return compare( other ) != 0;
+}
+
+bool String::operator<( const String &other ) const
+{
+    return compare( other ) < 0;
+}
+
+bool String::operator>( const String &other ) const
+{
+    return compare( other ) > 0;
+}
+
+bool String::operator<=( const String &other ) const
+{
+    return compare( other ) <= 0;
+}
+
+bool String::operator>=( const String &other ) const
+{
+    return compare( other ) >= 0;
+}
+
+String String::operator+( const String &other ) const
+{
+    String result = *this;
+    result << other;
+    return result;
+}
+
+size_t String::Length() const
+{
+    return text.size();
+}
+
+size_t String::Empty() const
+{
+    return text.empty();
+}
 
 void String::Clear()
 {
@@ -895,6 +1003,11 @@ String &String::operator<<( const std::wstring &data )
     return *this << data.c_str();
 }
 
+String &String::operator<<( const std::string &data )
+{
+    return *this << data.c_str();
+}
+
 String &String::operator<<( const wchar_t *data )
 {
     makeException( data != nullptr );
@@ -922,13 +1035,6 @@ String &String::operator<<( const wchar_t *data )
     return *this;
 }
 
-String &String::operator<<( const std::string &data )
-{
-    size_t pos = 0;
-    makeException( DecodeAscii( ( const uint8_t * )data.c_str(), data.length() * sizeof( char ), pos ) );
-    return *this;
-}
-
 String &String::operator<<( const char *data )
 {
     makeException( data != nullptr );
@@ -938,19 +1044,25 @@ String &String::operator<<( const char *data )
     return *this;
 }
 
+String &String::operator<<( wchar_t data )
+{
+    wchar_t s[2] = {};
+    s[0] = data;
+    return *this << s;
+}
+
+String &String::operator<<( char data )
+{
+    char s[2] = {};
+    s[0] = data;
+    return *this << s;
+}
+
 String &String::operator<<( bool data )
 {
     if( data )
         return *this << "true";
     return *this << "false";
-}
-
-String &String::operator<<( char data )
-{
-    char str[2];
-    str[0] = data;
-    str[1] = '\0';
-    return *this << str;
 }
 
 String &String::operator<<( signed char data )
@@ -969,14 +1081,6 @@ String &String::operator<<( unsigned char data )
     if( baseBase )
         convertInteger( base, output, *baseBase, showPlus, -1 );
     return *this << output;
-}
-
-String &String::operator<<( wchar_t data )
-{
-    wchar_t str[2];
-    str[0] = data;
-    str[1] = L'\0';
-    return *this << str;
 }
 
 String &String::operator<<( short int data )

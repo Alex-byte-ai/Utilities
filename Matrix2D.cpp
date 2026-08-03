@@ -12,15 +12,25 @@ Matrix2D::Matrix2D()
 
 Matrix2D::Matrix2D( double a00_, double a01_, double a10_, double a11_ ): a00( a00_ ), a01( a01_ ), a10( a10_ ), a11( a11_ ) {}
 
+Matrix2D::Matrix2D( const Matrix2D& other ): a00( other.a00 ), a01( other.a01 ), a10( other.a10 ), a11( other.a11 ) {}
+
 Matrix2D Matrix2D::operator*( const Matrix2D &a ) const
 {
     return Matrix2D( a00 * a.a00 + a01 * a.a10, a00 * a.a01 + a01 * a.a11, a10 * a.a00 + a11 * a.a10, a10 * a.a01 + a11 * a.a11 );
 }
 
+Matrix2D& Matrix2D::operator=( const Matrix2D& other )
+{
+    a00 = other.a00;
+    a01 = other.a01;
+    a10 = other.a10;
+    a11 = other.a11;
+    return *this;
+}
+
 Matrix2D &Matrix2D::operator*=( const Matrix2D &a )
 {
-    Matrix2D r = *this * a;
-    *this = r;
+    *this = *this * a;
     return *this;
 }
 

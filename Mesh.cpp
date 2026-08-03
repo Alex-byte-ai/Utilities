@@ -204,51 +204,120 @@ public:
 
 // ---------------- Material ----------------
 
-static void getValue( Scanner &s, Information::Wrapper& value, bool numeric )
+class File
 {
-    s.token.error( Scanner::Name );
-    auto key = ( std::wstring )s.token.s;
-    s.getToken();
+public:
+    File( const std::filesystem::path &path )
+    {
+        file.open( path );
+        get();
+    }
 
+    bool get()
+    {
+        std::wstring w;
+        if( file >> w )
+        {
+            word = std::move( w );
+            return true;
+        }
+
+        word.reset();
+        return false;
+    }
+
+    bool integer( long long int& x )
+    {
+        try
+        {
+            size_t pos = 0;
+            x = std::stoll( word.value(), &pos );
+            return pos ==  word->size();
+        }
+        catch( ... )
+        {}
+        return false;
+    }
+
+    bool floating( long double& x )
+    {
+        try
+        {
+            size_t pos = 0;
+            x = std::stold( word.value(), &pos );
+            return pos ==  word->size();
+        }
+        catch( ... )
+        {}
+        return false;
+    }
+
+    std::wstring line()
+    {
+        std::wstring l;
+        std::getline( file, l );
+        if( word )
+            l = *word + l;
+        get();
+        return l;
+    }
+
+    std::optional<std::wstring> word;
+private:
+    std::wifstream file;
+};
+
+static void getValue( File &file, Information::Wrapper& value, bool option )
+{
+    makeException( file.word.has_value() );
+    auto key = std::move( *file.word );
+    file.get();
+
+    bool number = false;
     Information::Array v;
-    while( true )
+    while( file.word )
     {
         Information::Item item;
-        if( s.token.t == Scanner::Int )
+        long long int n;
+        long double a;
+
+        if( file.integer( n ) )
         {
-            item = s.token.n;
+            item = n;
+            number = true;
             v.push( item );
-            s.getToken();
+            file.get();
         }
-        else if( s.token.t == Scanner::Real )
+        else if( file.floating( a ) )
         {
-            item = s.token.x;
+            item = a;
+            number = true;
             v.push( item );
-            s.getToken();
+            file.get();
         }
-        else if( !numeric && s.token.t == Scanner::Name )
+        else
         {
-            if( s.token.s == L"on" )
+            if( !option && number )
+                break;
+
+            if( file.word == L"on" )
             {
-                item = true;
-                v.push( item );
-                s.getToken();
+                item = 1;
             }
-            else if( s.token.s == L"off" )
+            else if( file.word == L"off" )
             {
-                item = false;
-                v.push( item );
-                s.getToken();
+                item = 0;
             }
             else
             {
-                item = ( std::wstring )s.token.s;
-                v.push( item );
-                s.getToken();
+                item = *file.word;
             }
+            v.push( item );
+            file.get();
+
+            if( option )
+                break;
         }
-        else
-            break;
     }
 
     if( v.size() > 1 )
@@ -261,31 +330,23 @@ static void getValue( Scanner &s, Information::Wrapper& value, bool numeric )
     }
 }
 
-static void getOptions( Scanner &s, Information::Wrapper& texture, Unicode::String &filePathSufix, std::optional<std::wstring>& type )
+static void getOptions( File &file, Information::Wrapper& texture, std::optional<std::wstring>& type )
 {
+    static const std::set<std::wstring> optionNames{L"-blendu", L"-blendv", L"-boost", L"-mm", L"-o", L"-s", L"-t", L"-texres", L"-clamp", L"-bm", L"-imfchan", L"-type"};
+
     type.reset();
 
-    s.getToken();
-
-    while( true )
+    while( file.word )
     {
-        filePathSufix.Clear();
-        filePathSufix << s.token.s;
-        // Options start with '-'
-        // If no '-', then nothing to parse
-        if( s.token.t != Scanner::Minus )
+        // Only parsing existing options
+        if( !optionNames.count( *file.word ) )
             return;
 
-        filePathSufix.Clear();
+        *file.word = file.word->substr( 1 );
 
-        // Consume '-'
-        s.getToken();
+        bool isType = file.word == L"type";
 
-        s.token.error( Scanner::Name );
-
-        bool isType = s.token.s == L"type";
-
-        getValue( s, texture, false );
+        getValue( file, texture, true );
 
         if( isType )
         {
@@ -297,72 +358,64 @@ static void getOptions( Scanner &s, Information::Wrapper& texture, Unicode::Stri
     makeException( false );
 }
 
-static void getMap( const std::filesystem::path &root, std::wstring name, Scanner &s, Information::Wrapper& material )
+static void getMap( File &file, Information::Wrapper& material, const std::filesystem::path &root )
 {
+    makeException( file.word.has_value() );
+    auto name = std::move( *file.word );
+    file.get();
+
     Information::Item textureItem;
     Information::Wrapper texture( textureItem );
 
-    Unicode::String string;
     std::optional<std::wstring> type;
-    getOptions( s, texture, string, type );
+    getOptions( file, texture, type );
 
     if( type )
     {
-        makeException( name == L"refl" );
+        name += L"_";
         name += *type;
     }
 
-    s.getLine();
-    string << s.token.s;
-    std::filesystem::path path( ( std::wstring )string );
-
+    std::filesystem::path path( file.line() );
     auto map = path.is_absolute() ? path : root / path;
     texture( L"map" ) = map.wstring();
     material( name ) = std::move( textureItem );
-    s.getToken();
 }
 
 static void getMaterials( const std::filesystem::path &path, Information::Wrapper& materials )
 {
-    static const std::set<std::wstring> mapNames{L"map_Ns", L"map_Ka", L"map_Kd", L"map_Ks", L"map_Ke", L"map_D", L"map_d", L"bump", L"map_bump", L"disp", L"decal", L"refl"};
-
-    std::ifstream file;
-    file.open( path, std::ios::binary );
-
-    Scanner s( file, path.generic_wstring() );
+    static const std::set<std::wstring>
+    mapNames{L"map_Ns", L"map_Ka", L"map_Kd", L"map_Ks", L"map_Ke", L"map_D", L"map_d", L"bump", L"map_bump", L"disp", L"decal", L"refl"},
+    valueNames{L"Ns", L"Ka", L"Kd", L"Ks", L"Ke", L"d", L"Tr", L"Tf", L"Ni", L"illum"};
 
     auto root = path.parent_path();
-
     materials = Information::Array();
 
-    while( s.token.t != Scanner::Nil )
+    File file( path );
+    while( file.word )
     {
-        s.token.error( Scanner::Name );
-        makeException( s.token.s == "newmtl" );
-
-        s.getLine();
-        s.getToken();
+        makeException( file.word == L"newmtl" );
+        file.get();
 
         Information::Item item;
         item = Information::Object();
-        item( L"name" ) = ( std::wstring )s.token.s;
+        item( L"name" ) = file.word.value();
         Information::Wrapper material( item( L"material" ) = Information::Object() );
+        file.get();
 
-        while( s.token.t != Scanner::Nil )
+        while( file.word )
         {
-            s.token.error( Scanner::Name );
-
-            if( s.token.s == "newmtl" )
-                break;
-
-            auto key = ( std::wstring )s.token.s;
-            if( mapNames.count( key ) )
+            if( mapNames.count( *file.word ) )
             {
-                getMap( root, std::move( key ), s, material );
+                getMap( file, material, root );
+            }
+            else if( valueNames.count( *file.word ) )
+            {
+                getValue( file, material, false );
             }
             else
             {
-                getValue( s, material, true );
+                makeException( false );
             }
         }
 
@@ -373,156 +426,95 @@ static void getMaterials( const std::filesystem::path &path, Information::Wrappe
     materials.output( L"output/" + std::to_wstring( id++ ) + L".txt" );
 }
 
-static bool setMaterials( const std::filesystem::path &path, const Information::Item& materials )
+static void setValue( Unicode::String& data, const std::wstring& key, Information::Item& value )
+{
+    data << key << L" ";
+
+    auto out = [&data]( const Information::Item & entry, const wchar_t* separator )
+    {
+        if( auto p = entry.pointer<bool>() )
+            data << *p << separator;
+        if( auto p = entry.pointer<long long>() )
+            data << *p << separator;
+        if( auto p = entry.pointer<unsigned long long>() )
+            data << *p << separator;
+        if( auto p = entry.pointer<long double>() )
+            data << *p << separator;
+        if( auto p = entry.pointer<Information::String>() )
+            data << ( std::wstring ) * p << separator;
+    };
+
+    if( value.is<Information::Array>() )
+    {
+        auto& array = value.as<Information::Array>();
+
+        size_t i = 0, n = array.size();
+        for( auto& entry : value.as<Information::Array>() )
+        {
+            out( entry, ( i + 1 < n ? L" " : L"" ) );
+            ++i;
+        }
+    }
+    else
+    {
+        out( value, L"" );
+    }
+
+    data << L"\n";
+}
+
+static void setOptions( Unicode::String& data, Information::Item& texture, std::optional<std::wstring> type )
+{
+    for( auto& [key, entry] : texture.as<Information::Object>() )
+    {
+        if( key == L"map" )
+            continue;
+
+        data << L"-";
+        setValue( data, key, const_cast<Information::Item&>( entry ) );
+    }
+    if( type )
+        data << L"-type " << *type;
+}
+
+static void setMap( Unicode::String& data, std::wstring key, Information::Item& texture )
+{
+    std::optional<std::wstring> type;
+    if( key.substr( 0, 4 ) == L"refl" )
+    {
+        type = key.substr( 4 );
+        key = L"refl";
+    }
+
+    data << key << L" ";
+
+    setOptions( data, texture, type );
+
+    data << ( std::wstring )texture( L"map" ).as<Information::String>() << "\n";
+    data << L"\n";
+}
+
+static bool setMaterials( const std::filesystem::path &path, Information::Item& materials )
 {
     Unicode::String data;
 
     for( const auto &sample : materials.as<Information::Array>() )
     {
-        const auto &name = sample( L"name" ).as<Information::String>();
-        const auto &mat = sample( L"material" ).as<Information::Object>();
+        auto& material = sample.as<Information::Object>();
 
-        auto writeTexture = [&]( const wchar_t *prefix, const std::optional<std::wstring> &type = {} )
+        data << L"newmtl " << ( std::wstring )material( L"name" ).as<Information::String>() << "\n";
+
+        for( auto& [key, entry] : material( L"material" ).as<Information::Object>() )
         {
-            if( !mat.exists( prefix ) )
-                return;
-
-            const auto &t = mat( prefix ).as<Information::Object>();
-
-            auto putBool = [&]( const std::wstring & key )
+            if( entry.is<Information::Object>() )
             {
-                if( t.exists( key ) )
-                {
-                    const auto& value = t( key );
-                    data << L"-" << key << L" " << ( value.as<bool>() ? L"on" : L"off" ) << L" ";
-                }
-            };
-
-            auto putValue = [&]( const std::wstring & key )
-            {
-                if( t.exists( key ) )
-                {
-                    const auto& value = t( key );
-                    data << L"-" << key << L" " << value.as<long double>() << L" ";
-                }
-            };
-
-            auto putIndex = [&]( const std::wstring & key )
-            {
-                if( t.exists( key ) )
-                {
-                    const auto& value = t( key );
-                    data << L"-" << key << L" " << value.as<long long int>() << L" ";
-                }
-            };
-
-            auto putVector = [&]( const std::wstring & key )
-            {
-                if( t.exists( key ) )
-                {
-                    const auto& vector = t( key );
-                    data << L"-" <<  key << L" " << vector( L"x" ).as<long double>() << L" " << vector( L"y" ).as<long double>() << L" " << vector( L"z" ).as<long double>() << L"\n";
-                }
-            };
-
-            auto putString = [&]( const std::wstring & key )
-            {
-                if( t.exists( key ) )
-                {
-                    const auto& string = t( key );
-                    data << L"-" <<  key << L" " << string.as<Information::String>() << L"\n";
-                }
-            };
-
-            auto putMm = [&]( const std::wstring & key )
-            {
-                if( t.exists( key ) )
-                {
-                    const auto& mm = t( key );
-                    data << L"-" <<  key << L" " << mm( L"brightness" ).as<Information::String>() << L" " << mm( L"contrast" ).as<Information::String>() << L"\n";
-                }
-            };
-
-            data << prefix << L" ";
-
-            putBool( L"blendu" );
-            putBool( L"blendv" );
-            putBool( L"clamp" );
-            putValue( L"boost" );
-
-            if( std::wstring( L"bump" ) == prefix && mat.exists( L"bm" ) )
-                data << L"-bm " << mat( L"bm" ).as<long double>() << L" ";
-
-            putIndex( L"texres" );
-            putString( L"imfchan" );
-
-            if( type )
-                data << L"-type " << *type << L" ";
-
-            putMm( L"mm" );
-            putVector( L"o" );
-            putVector( L"s" );
-            putVector( L"t" );
-
-            data << t( L"map" ).as<Information::String>() << L"\n";
-        };
-
-        auto putColor = [&]( const std::wstring & key )
-        {
-            if( mat.exists( key ) )
-            {
-                const auto& color = mat( key );
-                data << key << L" " << color( L"x" ).as<long double>() << L" " << color( L"y" ).as<long double>() << L" " << color( L"z" ).as<long double>() << L"\n";
+                setMap( data, key, const_cast<Information::Item&>( entry ) );
             }
-        };
-
-        auto putValue = [&]( const std::wstring & key )
-        {
-            if( mat.exists( key ) )
+            else
             {
-                const auto& value = mat( key );
-                data << key << L" " << value.as<long double>() << L"\n";
+                setValue( data, key, const_cast<Information::Item&>( entry ) );
             }
-        };
-
-        auto putIndex = [&]( const std::wstring & key )
-        {
-            if( mat.exists( key ) )
-            {
-                const auto& value = mat( key );
-                data << key << L" " << value.as<long long int>() << L"\n";
-            }
-        };
-
-        data << L"newmtl " << name << L"\n";
-
-        putColor( L"Ka" );
-        putColor( L"Kd" );
-        putColor( L"Ks" );
-        putColor( L"Ke" );
-        putValue( L"Ns" );
-        putValue( L"Ni" );
-        putValue( L"Tr" );
-        putIndex( L"illum" );
-
-        writeTexture( L"map_Ka" );
-        writeTexture( L"map_Kd" );
-        writeTexture( L"map_Ks" );
-        writeTexture( L"map_Ke" );
-        writeTexture( L"map_d" );
-        writeTexture( L"map_Ns" );
-        writeTexture( L"bump", {} );
-        writeTexture( L"disp" );
-        writeTexture( L"decal" );
-        writeTexture( L"refl", L"sphere" );
-        writeTexture( L"refl", L"cube_top" );
-        writeTexture( L"refl", L"cube_bottom" );
-        writeTexture( L"refl", L"cube_front" );
-        writeTexture( L"refl", L"cube_back" );
-        writeTexture( L"refl", L"cube_left" );
-        writeTexture( L"refl", L"cube_right" );
-
-        data << "\n";
+        }
     }
 
     size_t pos = 0;
@@ -914,12 +906,103 @@ void Mesh::prism( const std::vector<Vector2D>& base )
         addBaseTri( t.s.a.s + size, t.s.b.s + size, t.s.c.s + size );
 }
 
+void Mesh::torus( double a, double b, size_t n, size_t m )
+{
+    clear();
+
+    size_t count = m * n;
+    double path, angle;
+
+    normals.reserve( count );
+    points.reserve( count );
+    texturing.reserve( count );
+
+    auto shift = [&]( Vector3D v )
+    {
+        v.x += path;
+        return v;
+    };
+
+    for( size_t j = 0; j < m; ++j )
+    {
+        path = double( j ) / m;
+        angle = 2 * Pi() * path;
+        Vector3D normal( Cos( angle ), 0.0, Sin( angle ) );
+
+        normals.emplace_back( normal );
+        points.emplace_back( b * normal.x + a, 0.0, b * normal.z );
+        texturing.emplace_back( 0.0, path, 0.0 );
+    }
+
+    for( size_t i = 1; i < n; ++i )
+    {
+        path = double( i ) / n;
+        angle = 2 * Pi() * path;
+        Affine3D rotation( Matrix3D::Rotation( Vector3D( 0.0, 0.0, 1.0 ), angle ) );
+
+        for( size_t j = 0; j < m; ++j )
+        {
+            normals.emplace_back( rotation( normals[j] ) );
+            points.emplace_back( rotation( points[j] ) );
+            texturing.emplace_back( shift( texturing[j] ) );
+        }
+    }
+
+    // Helper to add one triangle
+    auto addTri = [&]( size_t i0, size_t i1, size_t i2 )
+    {
+        size_t e0 = edges.size();
+        edges.push_back( {i0, i1} );
+
+        size_t e1 = edges.size();
+        edges.push_back( {i1, i2} );
+
+        size_t e2 = edges.size();
+        edges.push_back( {i2, i0} );
+
+        faces.push_back( Face{ Triplet{ e0, e1, e2 }, Triplet{ i0, i1, i2 }, Triplet{ i0, i1, i2 } } );
+    };
+
+    auto right = [&]( size_t k )
+    {
+        return ( k + m ) % count;
+    };
+
+    auto top = [&]( size_t k )
+    {
+        return ( k / m ) * m + ( k + 1 ) % m;
+    };
+
+    // For each trapezoid, make two CCW triangles
+    size_t k = 0;
+    for( size_t i = 0; i < n; ++i )
+    {
+        for( size_t j = 0; j < m; ++j )
+        {
+            size_t ka, kb, kc;
+            ka = right( k );
+            kb = top( k );
+            kc = right( kb );
+            addTri( k, kc, kb );
+            addTri( k, ka, kc );
+            ++k;
+        }
+    }
+}
+
+void Mesh::sphereUV( size_t n, size_t m )
+{}
+
+void Mesh::sphereIco( size_t n )
+{}
+
 Mesh Mesh::extract( const Bitset &faceSet ) const
 {
     DiscreteFunction f;
     f.squishEmptySpace( faceSet );
 
     Mesh result;
+    result.materialsFile = materialsFile;
     result.points = points;
     result.normals = normals;
     result.texturing = texturing;
@@ -1078,6 +1161,19 @@ void Mesh::optimize()
     }
 }
 
+void Mesh::invert()
+{
+    for( auto& edge : edges )
+        std::swap( edge.s, edge.f );
+
+    for( auto& face : faces )
+    {
+        std::swap( face.p.b, face.p.c );
+        std::swap( face.n.b, face.n.c );
+        std::swap( face.t.b, face.t.c );
+    }
+}
+
 bool Mesh::sortFacesByGroup( int id )
 {
     auto s = groups.group( id );
@@ -1116,23 +1212,119 @@ void Mesh::transform( const Affine3D &f )
 {
     for( auto &p : points )
         p = f( p );
+    for( auto &n : normals )
+        n = ( f.t * n ).Normal();
 }
 
-void Mesh::transform( const std::function<void( Vector3D & )> &f )
+static std::map<Mesh::Edge, size_t> buildEdgeToFaceMap( const std::vector<Mesh::Edge>& edges, const std::vector<Mesh::Face>& faces )
 {
-    for( auto &p : points )
-        f( p );
+    std::map<Mesh::Edge, size_t> edgeFace;
+    for( size_t i = 0; i < faces.size(); ++i )
+    {
+        const auto& face = faces[i];
+        edgeFace.emplace( edges[face.p.a], i );
+        edgeFace.emplace( edges[face.p.b], i );
+        edgeFace.emplace( edges[face.p.c], i );
+    }
+    return edgeFace;
+}
+
+static std::map<size_t, std::vector<size_t>> buildPointToFacesMap( const std::vector<Mesh::Edge>& edges, const std::vector<Mesh::Face>& faces )
+{
+    std::map<size_t, std::vector<size_t>> pointFaces;
+    auto add = [&pointFaces]( size_t s )
+    {
+        return &pointFaces.emplace( s, std::vector<size_t>() ).first->second;
+    };
+
+    auto edgeFace = buildEdgeToFaceMap( edges, faces );
+    auto s = edgeFace.begin()->first.s;
+    auto faceList = add( s );
+
+    for( const auto& [edge, faceId] : edgeFace )
+    {
+        if( s != edge.s )
+        {
+            s = edge.s;
+            faceList = add( s );
+        }
+        faceList->push_back( faceId );
+    }
+
+    return pointFaces;
+}
+
+static std::map<size_t, std::vector<size_t>> buildNormalToFacesMap( const std::vector<Mesh::Face>& faces )
+{
+    std::map<size_t, std::vector<size_t>> normalFaces;
+    for( size_t i = 0; i < faces.size(); ++i )
+    {
+        const auto& face = faces[i];
+        normalFaces.emplace( face.n.a, std::vector<size_t>() ).first->second.push_back( i );
+        normalFaces.emplace( face.n.b, std::vector<size_t>() ).first->second.push_back( i );
+        normalFaces.emplace( face.n.c, std::vector<size_t>() ).first->second.push_back( i );
+    }
+    return normalFaces;
+}
+
+static std::map<size_t, std::vector<size_t>> buildTextureToFacesMap( const std::vector<Mesh::Face>& faces )
+{
+    std::map<size_t, std::vector<size_t>> textureFaces;
+    for( size_t i = 0; i < faces.size(); ++i )
+    {
+        const auto& face = faces[i];
+        textureFaces.emplace( face.t.a, std::vector<size_t>() ).first->second.push_back( i );
+        textureFaces.emplace( face.t.b, std::vector<size_t>() ).first->second.push_back( i );
+        textureFaces.emplace( face.t.c, std::vector<size_t>() ).first->second.push_back( i );
+    }
+    return textureFaces;
+}
+
+void Mesh::setPoints( const std::function<void( Vector3D &, const std::vector<size_t>& faces )>& f )
+{
+    for( const auto& [pointId, faceList] : buildPointToFacesMap( edges, faces ) )
+        f( points[pointId], faceList );
+}
+
+void Mesh::setNormals( const std::function<void( Vector3D &, const std::vector<size_t>& faces )>& f )
+{
+    for( const auto& [pointId, faceList] : buildNormalToFacesMap( faces ) )
+        f( points[pointId], faceList );
+}
+
+void Mesh::setTexturing( const std::function<void( Vector3D &, const std::vector<size_t>& faces )>& f )
+{
+    for( const auto& [pointId, faceList] : buildTextureToFacesMap( faces ) )
+        f( points[pointId], faceList );
+}
+
+void Mesh::setPoints( const std::function<void( Vector3D & )>& f )
+{
+    for( auto& point : points )
+        f( point );
+}
+
+void Mesh::setNormals( const std::function<void( Vector3D & )>& f )
+{
+    for( auto& normal : normals )
+        f( normal );
+}
+
+void Mesh::setTexturing( const std::function<void( Vector3D & )>& f )
+{
+    for( auto& texture : texturing )
+        f( texture );
 }
 
 void Mesh::clear()
 {
+    materialsFile.reset();
     points.clear();
     normals.clear();
     texturing.clear();
     edges.clear();
     faces.clear();
     groups.clear();
-    materialsFile.reset();
 }
 
 std::optional<std::filesystem::path>& Mesh::getMaterialsFile()
@@ -1489,18 +1681,21 @@ bool Mesh::output( const std::filesystem::path &path ) const
 
     if( materialsFile )
     {
+        auto materialOutput = materialsFile->filename();
+        data << L"mtllib " << materialOutput.wstring() << L"\n";
+        materialOutput = path.parent_path() / materialOutput;
+
         if( materials )
         {
-            ::setMaterials( *materialsFile, *materials );
+            ::setMaterials( materialOutput, *const_cast<Mesh*>( this )->materials );
         }
         else
         {
             Information::Item temporary;
             Information::Wrapper t( temporary );
             ::getMaterials( *materialsFile, t );
-            ::setMaterials( *materialsFile, temporary );
+            ::setMaterials( materialOutput, temporary );
         }
-        data << materialsFile->wstring() << L"\n";
     }
 
     data << L"o Mesh\n";
@@ -1540,7 +1735,7 @@ bool Mesh::output( const std::filesystem::path &path ) const
 
     size_t pos = 0;
     std::vector<uint8_t> fileData;
-    if( !data.EncodeUtf8( fileData, pos, true ) )
+    if( !data.EncodeUtf8( fileData, pos, false ) )
         return false;
 
     std::ofstream file( path, std::ios::binary );

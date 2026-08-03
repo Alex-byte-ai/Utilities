@@ -19,6 +19,10 @@ public:
         // Positions of edge's ends (start, finish) in points
         // Order matters, edges, that only differ in order, can both be stored in `edges`
         size_t s, f;
+        bool operator<( const Edge& other ) const
+        {
+            return s < other.s || ( s == other.s && f < other.f );
+        };
     };
 
     struct Triplet
@@ -36,9 +40,8 @@ public:
 
     using Group = std::map<std::wstring, Bitset>;
 
-    class Groups
+    struct Groups
     {
-    public:
         std::optional<Group> o, g, m;
 
         Groups( bool f0, bool f1, bool f2 );
@@ -62,20 +65,29 @@ public:
 
     std::optional<size_t> intersectSegment( const Vector3D &p0, const Vector3D &p1, double &u, double &v, double &t ) const;
 
-    void cube(); // Sets mesh to be a unit cube
-    void plane( size_t rows, size_t columns ); // Sets mesh to be a subdivided unit plane
-    void prism( const std::vector<Vector2D>& base ); // Generates a prism of height one
+    void cube(); // Unit cube
+    void plane( size_t rows, size_t columns ); // Subdivided unit plane
+    void prism( const std::vector<Vector2D>& base ); // Prism of height one
+    void torus( double a, double b, size_t n, size_t m ); // Torus of radius `a` (Circle is approximated by `n` sided polygon) with section of radius 'b' (Circle is approximated by `m` sided polygon)
+    void sphereUV( size_t n, size_t m ); // Unit UV sphere
+    void sphereIco( size_t n ); // Unit ico sphere
 
     Mesh extract( const Bitset &faceSet ) const;
 
     void remakeNormals( bool faceNormals );
     void normalize();
     void optimize();
+    void invert();
     bool sortFacesByGroup( int id );
 
-    // Applies transformation to all the points of the mesh
+    // Applies transformation to the mesh
     void transform( const Affine3D &f );
-    void transform( const std::function<void( Vector3D & )> &f );
+    void setPoints( const std::function<void( Vector3D & point, const std::vector<size_t>& faces )>& f );
+    void setNormals( const std::function<void( Vector3D & normal, const std::vector<size_t>& faces )>& f );
+    void setTexturing( const std::function<void( Vector3D & texture, const std::vector<size_t>& faces )>& f );
+    void setPoints( const std::function<void( Vector3D & point )>& f );
+    void setNormals( const std::function<void( Vector3D & normal )>& f );
+    void setTexturing( const std::function<void( Vector3D & texture )>& f );
 
     void clear();
 
@@ -103,13 +115,11 @@ public:
     };
 
     template<typename V>
-    struct Va3
+    struct Va3 : public V3<V>
     {
-        V a, b, c;
-
         std::remove_reference_t<V> operator()( double u, double v ) const
         {
-            return a * ( 1.0 - u - v ) + b * u + c * v;
+            return V3<V>::a * ( 1.0 - u - v ) + V3<V>::b * u + V3<V>::c * v;
         }
     };
 

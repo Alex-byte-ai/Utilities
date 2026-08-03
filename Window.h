@@ -402,8 +402,6 @@ struct Window : virtual public ActiveGroup
 
     int titlebarHeight, buttonSize, buttonSpacingH, buttonSpacingV, triggerWidth, borderWidth;
 
-    bool minimized;
-
     Trigger self, topTrigger, bottomTrigger, leftTrigger, rightTrigger, mouseTrigger;
     Rectangle titleBar, leftBorder, rightBorder, topBorder, bottomBorder, client;
     Image icon, content;
@@ -543,7 +541,7 @@ public:
 
 struct FileManager : public GraphicInterface::Window
 {
-    FileManager( bool write );
+    FileManager( std::filesystem::path initial, bool write );
     FileManager( const FileManager& other ) = delete;
     virtual ~FileManager();
 
@@ -576,5 +574,5 @@ struct Hierarchy : public GraphicInterface::Window
     virtual void update() override;
 };
 
-void savePath( std::function<void( const std::optional<std::filesystem::path>& )> callback );
-void openPath( std::function<void( const std::optional<std::filesystem::path>& )> callback );
+void savePath( std::function<void( const std::optional<std::filesystem::path>& )> callback, std::filesystem::path path = L"C:\\Users\\User\\Downloads" );
+void openPath( std::function<void( const std::optional<std::filesystem::path>& )> callback, std::filesystem::path path = L"C:\\Users\\User\\Downloads" );

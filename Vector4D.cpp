@@ -8,6 +8,17 @@ Vector4D::Vector4D(): x( 0 ), y( 0 ), z( 0 ), w( 0 ) {}
 
 Vector4D::Vector4D( double x_, double y_, double z_, double w_ ): x( x_ ), y( y_ ), z( z_ ), w( w_ ) {}
 
+Vector4D::Vector4D( const Vector4D& other ): x( other.x ), y( other.y ), z( other.z ), w( other.w ) {}
+
+Vector4D& Vector4D::operator=( const Vector4D& other )
+{
+    x = other.x;
+    y = other.y;
+    z = other.z;
+    w = other.w;
+    return * this;
+}
+
 Vector4D Vector4D::operator+() const
 {
     return Vector4D( +x, +y, +z, +w );

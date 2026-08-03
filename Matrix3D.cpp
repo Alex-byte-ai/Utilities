@@ -14,6 +14,24 @@ Matrix3D::Matrix3D( double a00_, double a01_, double a02_, double a10_, double a
     : a00( a00_ ), a01( a01_ ), a02( a02_ ), a10( a10_ ), a11( a11_ ), a12( a12_ ), a20( a20_ ), a21( a21_ ), a22( a22_ )
 {}
 
+Matrix3D::Matrix3D( const Matrix3D& other )
+    : a00( other.a00 ), a01( other.a01 ), a02( other.a02 ), a10( other.a10 ), a11( other.a11 ), a12( other.a12 ), a20( other.a20 ), a21( other.a21 ), a22( other.a22 )
+{}
+
+Matrix3D& Matrix3D::operator=( const Matrix3D& other )
+{
+    a00 = other.a00;
+    a01 = other.a01;
+    a02 = other.a02;
+    a10 = other.a10;
+    a11 = other.a11;
+    a12 = other.a12;
+    a20 = other.a20;
+    a21 = other.a21;
+    a22 = other.a22;
+    return *this;
+}
+
 Matrix3D Matrix3D::operator*( const Matrix3D &a ) const
 {
     return Matrix3D( a00 * a.a00 + a01 * a.a10 + a02 * a.a20,
@@ -31,8 +49,7 @@ Matrix3D Matrix3D::operator*( const Matrix3D &a ) const
 
 Matrix3D &Matrix3D::operator*=( const Matrix3D &a )
 {
-    Matrix3D r = *this * a;
-    *this = r;
+    *this = *this * a;
     return *this;
 }
 
@@ -280,8 +297,8 @@ Matrix3D Matrix3D::Rotation( const Vector3D &axis, double angle )
     double c = Cos( angle );
     double s = Sin( angle );
     auto u = axis.Normal();
-    return Matrix3D( u.x * u.x * ( 1 - c ) + c, u.x * u.y * ( 1 - c ) - u.z * s, u.x * u.z * ( 1 - c ) + u.y * s,
-                     u.x * u.y * ( 1 - c ) + u.z * s, u.y * u.y * ( 1 - c ) + c, u.y * u.z * ( 1 - c ) - u.x * s,
+    return Matrix3D( u.x * u.x * ( 1 - c ) + c,       u.x * u.y * ( 1 - c ) - u.z * s, u.x * u.z * ( 1 - c ) + u.y * s,
+                     u.x * u.y * ( 1 - c ) + u.z * s, u.y * u.y * ( 1 - c ) + c,       u.y * u.z * ( 1 - c ) - u.x * s,
                      u.x * u.z * ( 1 - c ) - u.y * s, u.y * u.z * ( 1 - c ) + u.x * s, u.z * u.z * ( 1 - c ) + c );
 }
 

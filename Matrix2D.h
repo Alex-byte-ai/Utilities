@@ -12,6 +12,9 @@ public:
 
     Matrix2D();
     Matrix2D( double a00, double a01, double a10, double a11 );
+    Matrix2D( const Matrix2D& other );
+
+    Matrix2D& operator=( const Matrix2D& other );
 
     Matrix2D operator*( const Matrix2D &a ) const;
     Matrix2D &operator*=( const Matrix2D &a );

@@ -34,20 +34,62 @@ public:
         Real,
         Text,
         Slash,
+        SlashEquals,
+        BackSlash,
         Colon,
+        Semicolon,
         Comma,
+        Dot,
+        Exclamation,
+        ExclamationEquals,
+        Question,
+        Circumflex,
+        CircumflexEquals,
+        NumberSign,
+        Percent,
+        PercentEquals,
+        AtSign,
+        Ampersand,
+        AmpersandEquals,
+        VerticalBar,
+        VerticalBarEquals,
+        Dollar,
+        Tilde,
+        Equals,
+        EqualsEquals,
+        Smaller,
+        SmallerSmaller,
+        SmallerSmallerEquals,
+        SmallerEquals,
+        Greater,
+        GreaterGreater,
+        GreaterGreaterEquals,
+        GreaterEquals,
+        Minus,
+        MinusMinus,
+        MinusMinusPost,
+        MinusMinusPre,
+        MinusEquals,
+        Plus,
+        PlusPlus,
+        PlusPlusPost,
+        PlusPlusPre,
+        PlusEquals,
+        Star,
+        StarEquals,
         BraceO,
         BraceC,
         BracketO,
         BracketC,
-        Plus,
-        Minus,
+        ParenthesisO,
+        ParenthesisC,
         Line,
     };
 
     class Token
     {
     private:
+    public:
         Scanner &scanner;
     public:
         TokenType t;
@@ -59,7 +101,9 @@ public:
         unsigned place, line;
 
         Token( Scanner &scanner );
+        Token( const Token& other );
 
+        bool isSign() const;
         Unicode::String name() const;
         static Unicode::String description( TokenType type );
 

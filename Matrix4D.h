@@ -17,6 +17,9 @@ public:
               double a10, double a11, double a12, double a13,
               double a20, double a21, double a22, double a23,
               double a30, double a31, double a32, double a33 );
+    Matrix4D( const Matrix4D& other );
+
+    Matrix4D& operator=( const Matrix4D& other );
 
     Matrix4D operator*( const Matrix4D &a ) const;
     Matrix4D &operator*=( const Matrix4D &a );
@@ -48,8 +51,8 @@ public:
 
     static Matrix4D Zero();
     static Matrix4D Identity();
-    static Matrix4D Perspective( double fovY, double aspect, double zNear, double zFar );
-    static Matrix4D Orthographic( double left, double right, double bottom, double top, double zNear, double zFar );
+    static Matrix4D Perspective( double verFov, double aspect, double near, double far );
+    static Matrix4D Orthographic( double left, double right, double back, double front, double bottom, double top );
 };
 
 Matrix4D operator*( double k, const Matrix4D &a );

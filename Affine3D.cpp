@@ -1,6 +1,6 @@
 #include "Affine3D.h"
 
-Affine3D::Affine3D() {}
+Affine3D::Affine3D(): t( Matrix3D::Identity() ), s() {}
 
 Affine3D::Affine3D( const Affine3D &other )
 {
@@ -27,8 +27,6 @@ Affine3D Affine3D::operator*( const Affine3D &a ) const
     r *= a;
     return r;
 }
-
-
 
 Affine3D &Affine3D::operator*=( const Affine3D &a )
 {

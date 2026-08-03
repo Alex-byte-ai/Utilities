@@ -99,10 +99,11 @@ public:
     template <typename T>
     Item &operator=( const T &value )
     {
+        static Item none;
         Item item;
         item = value;
         collapse( item );
-        return *self;
+        return self ? *self : none;
     }
 
     Wrapper operator()( const KeyVerbatim &key );
@@ -118,8 +119,15 @@ public:
 
     template <typename T>
     const T &as() const;
+
+    template <typename T>
+    T *pointer();
+
+    template <typename T>
+    const T *pointer() const;
 private:
     Wrapper();
+    Wrapper( Wrapper &&other );
     Wrapper( const Wrapper &other );
     bool descend();
     void collapse( Item &item );
@@ -197,6 +205,24 @@ public:
         makeException( is<T>() );
         return std::get<T>( item );
     }
+
+    template <typename T>
+    T *pointer()
+    {
+        static_assert( !std::is_same_v<T, Null> );
+        if( is<T>() )
+            return &std::get<T>( item );
+        return nullptr;
+    }
+
+    template <typename T>
+    const T *pointer() const
+    {
+        static_assert( !std::is_same_v<T, Null> );
+        if( is<T>() )
+            return &std::get<T>( item );
+        return nullptr;
+    }
 private:
     std::variant<bool,
         long long, unsigned long long, long double,
@@ -225,5 +251,23 @@ const T &Wrapper::as() const
     static_assert( !std::is_same_v<T, Null> );
     makeException( self && keys.empty() );
     return self->as<T>();
+}
+
+template <typename T>
+T *Wrapper::pointer()
+{
+    static_assert( !std::is_same_v<T, Null> );
+    if( self && keys.empty() )
+        return self->pointer<T>();
+    return nullptr;
+}
+
+template <typename T>
+const T *Wrapper::pointer() const
+{
+    static_assert( !std::is_same_v<T, Null> );
+    if( self && keys.empty() )
+        return self->pointer<T>();
+    return nullptr;
 }
 }

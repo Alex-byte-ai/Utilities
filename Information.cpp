@@ -218,7 +218,11 @@ Item &Wrapper::operator=( Item &&item )
 
 Wrapper Wrapper::operator()( const KeyVerbatim &key )
 {
-    makeException( !self || self->is<Null>() || self->is<Object>() );
+    if( self && !self->is<Null>() && !self->is<Object>() )
+    {
+        Wrapper result;
+        return result;
+    }
 
     if( keys.empty() && self && self->is<Object>() )
     {
@@ -249,7 +253,11 @@ Wrapper Wrapper::operator()( const KeyVerbatim &key )
 
 Wrapper Wrapper::operator[]( const KeyNumeric &key )
 {
-    makeException( !self || self->is<Null>() || self->is<Array>() );
+    if( self && !self->is<Null>() && !self->is<Array>() )
+    {
+        Wrapper result;
+        return result;
+    }
 
     if( keys.empty() && self && self->is<Array>() )
     {
@@ -287,6 +295,12 @@ bool Wrapper::output( const std::filesystem::path &path ) const
 
 Wrapper::Wrapper() : root( nullptr ), self( nullptr )
 {}
+
+Wrapper::Wrapper( Wrapper &&other ) : keys( std::move( other.keys ) ), root( other.root ), self( other.self ), id( std::move( other.id ) )
+{
+    other.root = nullptr;
+    other.self = nullptr;
+}
 
 Wrapper::Wrapper( const Wrapper &other ) : keys( other.keys ), root( other.root ), self( other.self ), id( other.id )
 {}
@@ -345,16 +359,18 @@ void Wrapper::collapse( Item &item )
                 if( root->is<Null>() )
                     *root = Object();
                 auto &object = root->as<Object>();
+                bool remove = i.is<Null>();
                 object.push( key, std::move( i ) );
-                self = &object( key );
+                self = remove ? nullptr : &object( key );
             }
             if constexpr( std::is_same_v<T, KeyNumeric> )
             {
                 if( root->is<Null>() )
                     *root = Array();
                 auto &array = root->as<Array>();
+                bool remove = i.is<Null>();
                 array.push( key, std::move( i ) );
-                self = &array[key];
+                self = remove ? nullptr : &array[key];
             }
         }, id );
 

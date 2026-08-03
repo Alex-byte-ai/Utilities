@@ -20,6 +20,34 @@ Matrix4D::Matrix4D( double a00_, double a01_, double a02_, double a03_,
       a30( a30_ ), a31( a31_ ), a32( a32_ ), a33( a33_ )
 {}
 
+Matrix4D::Matrix4D( const Matrix4D& other )
+    : a00( other.a00 ), a01( other.a01 ), a02( other.a02 ), a03( other.a03 ),
+      a10( other.a10 ), a11( other.a11 ), a12( other.a12 ), a13( other.a13 ),
+      a20( other.a20 ), a21( other.a21 ), a22( other.a22 ), a23( other.a23 ),
+      a30( other.a30 ), a31( other.a31 ), a32( other.a32 ), a33( other.a33 )
+{}
+
+Matrix4D& Matrix4D::operator=( const Matrix4D& other )
+{
+    a00 = other.a00;
+    a01 = other.a01;
+    a02 = other.a02;
+    a03 = other.a03;
+    a10 = other.a10;
+    a11 = other.a11;
+    a12 = other.a12;
+    a13 = other.a13;
+    a20 = other.a20;
+    a21 = other.a21;
+    a22 = other.a22;
+    a23 = other.a23;
+    a30 = other.a30;
+    a31 = other.a31;
+    a32 = other.a32;
+    a33 = other.a33;
+    return *this;
+}
+
 Matrix4D Matrix4D::operator*( const Matrix4D &a ) const
 {
     Matrix4D r;
@@ -196,38 +224,35 @@ Matrix4D Matrix4D::Identity()
                0, 0, 0, 1 );
 }
 
-Matrix4D Matrix4D::Perspective( double fovY, double aspect, double zNear, double zFar )
+Matrix4D Matrix4D::Perspective( double verFov, double aspect, double near, double far )
 {
-    double f = 1.0 / Tan( fovY * 0.5 );
-    double A = ( zFar + zNear ) / ( zNear - zFar );
-    double B = ( 2.0 * zFar * zNear ) / ( zNear - zFar );
+    double fw = 1.0 / Tan( verFov * 0.5 );
+    double fh = fw / aspect;
+    double A = ( far + near ) / ( far - near );
+    double B = ( 2.0 * far * near ) / ( near - far );
 
-    return Matrix4D(
-               f / aspect, 0.0,  0.0,  0.0,
-               0.0,        f,    0.0,  0.0,
-               0.0,        0.0,   A,    B,
-               0.0,        0.0,  -1.0,  0.0
-           );
+    return Matrix4D( fh,  0.0, 0.0,  0.0,
+                     0.0, 0.0, fw,   0.0,
+                     0.0, A,   0.0,    B,
+                     0.0, 1.0, 0.0,  0.0 );
 }
 
-Matrix4D Matrix4D::Orthographic( double left, double right, double bottom, double top, double zNear, double zFar )
+Matrix4D Matrix4D::Orthographic( double left, double right, double back, double front, double bottom, double top )
 {
     // scale terms
-    double sx =  2.0 / ( right - left );
-    double sy =  2.0 / ( top   - bottom );
-    double sz = -2.0 / ( zFar  - zNear );
+    double sx = 2.0 / ( right - left );
+    double sy = 2.0 / ( front - back );
+    double sz = 2.0 / ( top - bottom );
 
     // translation terms
-    double tx = -( right + left )   / ( right - left );
-    double ty = -( top   + bottom ) / ( top   - bottom );
-    double tz = -( zFar  + zNear )  / ( zFar  - zNear );
+    double tx = -( right + left ) / ( right - left );
+    double ty = -( top + bottom ) / ( top - bottom );
+    double tz = -( front + back ) / ( front - back );
 
-    return Matrix4D(
-               sx,   0.0, 0.0, tx,
-               0.0,  sy,  0.0, ty,
-               0.0,  0.0, sz,  tz,
-               0.0,  0.0, 0.0, 1.0
-           );
+    return Matrix4D( sx,   0.0, 0.0, tx,
+                     0.0,  sy,  0.0, ty,
+                     0.0,  0.0, sz,  tz,
+                     0.0,  0.0, 0.0, 1.0 );
 }
 
 Matrix4D operator*( double k, const Matrix4D &a )

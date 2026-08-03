@@ -9,6 +9,9 @@ public:
 
     Vector4D();
     Vector4D( double x, double y, double z, double w );
+    Vector4D( const Vector4D& other );
+
+    Vector4D& operator=( const Vector4D& other );
 
     Vector4D operator+() const;
     Vector4D operator+( const Vector4D &a ) const;

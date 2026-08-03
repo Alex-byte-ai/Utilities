@@ -13,6 +13,9 @@ public:
 
     Matrix3D();
     Matrix3D( double a00, double a01, double a02, double a10, double a11, double a12, double a20, double a21, double a22 );
+    Matrix3D( const Matrix3D& other );
+
+    Matrix3D& operator=( const Matrix3D& other );
 
     Matrix3D operator*( const Matrix3D &a ) const;
     Matrix3D &operator*=( const Matrix3D &a );

@@ -1,6 +1,7 @@
 #include "Window.h"
 
 #include <windows.h>
+#include <dwmapi.h>
 
 #include <algorithm>
 #include <cwctype>
@@ -14,7 +15,7 @@
 class GenericWindow
 {
 public:
-    GenericWindow( GraphicInterface::Window &desc );
+    GenericWindow( GraphicInterface::Window &desc, bool lock );
     ~GenericWindow();
 
     // Creates and runs an interactive window
@@ -31,12 +32,23 @@ public:
     // Returns true, if a message was processed
     bool handle();
 
+    // Focuses this window
+    void focus();
+
     static void update();
 
     static size_t count();
 private:
     void inputReset();
     void inputRelease();
+
+    void createTab();
+    void releaseData();
+
+    HBITMAP imageScale( int width, int height );
+    HBITMAP image();
+
+    static void setupBitmap( int width, int height, HBITMAP& bitmap, uint32_t*& pixels );
 
     static void killFocus();
     static void setFocus();
@@ -58,26 +70,11 @@ private:
 
     std::optional<Popup> popup;
 
-    struct Data
-    {
-        std::shared_ptr<GenericWindow> window;
-        bool lock;
+    HBITMAP original, preview;
+    HWND proxy;
+    bool lock;
 
-        Data( std::shared_ptr<GenericWindow> w, bool l ) : window( std::move( w ) ), lock( l )
-        {}
-
-        Data( Data&& other ) : window( std::move( other.window ) ), lock( other.lock )
-        {};
-
-        Data& operator=( Data&& other )
-        {
-            window = std::move( other.window );
-            lock = other.lock;
-            return *this;
-        };
-    };
-
-    static std::vector<Data> stack;
+    static std::vector<std::shared_ptr<GenericWindow>> stack;
     static GenericWindow *active;
     static bool needCleanup;
     static HWND hndwnd;
@@ -387,15 +384,19 @@ int Group::width() const
     int left = std::numeric_limits<int>::max(), right = std::numeric_limits<int>::lowest();
     for( auto object : objects )
     {
-        auto size = object->width();
-        if( object->visible && size > 0 )
+        auto& o = *object;
+        if( o.visible )
         {
-            auto p = object->x;
-            if( p < left )
-                left = p;
-            p += size;
-            if( right > p )
-                right = p;
+            auto size = o.width();
+            if( size > 0 )
+            {
+                auto p = o.x;
+                if( p < left )
+                    left = p;
+                p += size;
+                if( p > right )
+                    right = p;
+            }
         }
     }
 
@@ -410,15 +411,19 @@ int Group::height() const
     int top = std::numeric_limits<int>::max(), bottom = std::numeric_limits<int>::lowest();
     for( auto object : objects )
     {
-        auto size = object->height();
-        if( object->visible && size > 0 )
+        auto& o = *object;
+        if( o.visible )
         {
-            auto p = object->y;
-            if( p < top )
-                top = p;
-            p += size;
-            if( bottom > p )
-                bottom = p;
+            auto size = o.height();
+            if( size > 0 )
+            {
+                auto p = o.y;
+                if( p < top )
+                    top = p;
+                p += size;
+                if( p > bottom )
+                    bottom = p;
+            }
         }
     }
 
@@ -441,12 +446,12 @@ bool Group::contains( int x0, int y0 ) const
 
 void Group::draw( uint32_t *pixels, int width, int height, int dx, int dy ) const
 {
+    if( !visible )
+        return;
+
     outer( dx, dy );
     for( auto object : objects )
-    {
-        if( object->visible )
-            object->draw( pixels, width, height, dx, dy );
-    }
+        object->draw( pixels, width, height, dx, dy );
 }
 
 void Group::add( Object *object )
@@ -550,7 +555,7 @@ void ActiveGroup::remove( Object *object )
 Box::Box() : Object(), w( 0 ), h( 0 )
 {}
 
-Box::Box( const Box& other ) : Object( other )
+Box::Box( const Box& other ) : Object( other ), w( other.w ), h( other.h )
 {}
 
 Box::~Box()
@@ -630,6 +635,9 @@ Rectangle::~Rectangle()
 
 void Rectangle::draw( uint32_t *pixels, int width, int height, int dx, int dy ) const
 {
+    if( !visible )
+        return;
+
     outer( dx, dy );
     fill( pixels, width, height, color, w, h, dx, dy );
 }
@@ -688,6 +696,9 @@ void Image::prepare( const void *data, int stride, int height )
 
 void Image::draw( uint32_t *otherPixels, int width, int height, int dx, int dy ) const
 {
+    if( !visible )
+        return;
+
     outer( dx, dy );
 
     int x0 = dx;
@@ -757,6 +768,9 @@ void ImageBlend::prepare( const void *data, int stride, int height )
 
 void ImageBlend::draw( uint32_t *otherPixels, int width, int height, int dx, int dy ) const
 {
+    if( !visible )
+        return;
+
     outer( dx, dy );
 
     int x0 = dx;
@@ -851,6 +865,9 @@ void DynamicText::prepare( bool write )
 
 void DynamicText::draw( uint32_t *canvas, int width, int height, int dx, int dy ) const
 {
+    if( !visible )
+        return;
+
     auto idleColor = makeColor( 255, 255, 255, 255 );
     auto errorColor = makeColor( 255, 127, 127, 255 );
     auto focusColor = makeColor( 255, 255, 127, 255 );
@@ -927,6 +944,9 @@ size_t Combobox::select( int x0, int y0 )
 
 void Combobox::draw( uint32_t *pixels, int width, int height, int dx, int dy ) const
 {
+    if( !visible )
+        return;
+
     auto base = makeColor( 255, 255, 255, 255 );
     auto selection = makeColor( 255, 255, 127, 255 );
     StaticText text;
@@ -1042,7 +1062,7 @@ TextButton::~TextButton()
 
 void TextButton::draw( uint32_t *pixels, int width, int height, int dx, int dy ) const
 {
-    if( w <= 0 || h <= 0 )
+    if( !visible || w <= 0 || h <= 0 )
         return;
 
     outer( dx, dy );
@@ -1079,6 +1099,9 @@ MinimizeButton::~MinimizeButton()
 
 void MinimizeButton::draw( uint32_t *pixels, int width, int height, int dx, int dy ) const
 {
+    if( !visible )
+        return;
+
     outer( dx, dy );
 
     auto color = hovered ? makeColor( 235, 235, 235, 255 ) : makeColor( 255, 255, 255, 255 );
@@ -1100,6 +1123,9 @@ MaximizeButton::~MaximizeButton()
 
 void MaximizeButton::draw( uint32_t *pixels, int width, int height, int dx, int dy ) const
 {
+    if( !visible )
+        return;
+
     outer( dx, dy );
 
     auto color = hovered ? makeColor( 235, 235, 235, 255 ) : makeColor( 255, 255, 255, 255 );
@@ -1130,6 +1156,9 @@ CloseButton::~CloseButton()
 
 void CloseButton::draw( uint32_t *pixels, int width, int height, int dx, int dy ) const
 {
+    if( !visible )
+        return;
+
     outer( dx, dy );
 
     auto color = hovered ? makeColor( 245, 10, 10, 255 ) : makeColor( 255, 255, 255, 255 );
@@ -1174,6 +1203,9 @@ void PlusButton::setDefaultCallback()
 
 void PlusButton::draw( uint32_t *pixels, int width, int height, int dx, int dy ) const
 {
+    if( !visible )
+        return;
+
     outer( dx, dy );
 
     auto color = hovered && !off ? makeColor( 220, 220, 60, 255 ) : makeColor( 200, 200, 200, 255 );
@@ -1206,6 +1238,9 @@ DropArea::~DropArea()
 
 void DropArea::draw( uint32_t *pixels, int width, int height, int dx, int dy ) const
 {
+    if( !visible )
+        return;
+
     if( hovered )
     {
         outer( dx, dy );
@@ -1474,7 +1509,7 @@ OutputData::OutputData( GraphicInterface::Window &desc ) : image( desc.content )
 {}
 
 Window::Window( int th, int sz, int bh, int tgw, int b )
-    : titlebarHeight( th ), buttonSize( sz ), buttonSpacingH( bh ), triggerWidth( tgw ), borderWidth( b ), minimized( false )
+    : titlebarHeight( th ), buttonSize( sz ), buttonSpacingH( bh ), triggerWidth( tgw ), borderWidth( b )
 {
     buttonSpacingV = ( titlebarHeight - buttonSize ) / 2;
 
@@ -2109,7 +2144,7 @@ bool ContextMenu::run( bool lock )
     return Window::run( lock );
 }
 
-FileManager::FileManager( bool write )
+FileManager::FileManager( std::filesystem::path initial, bool write )
 {
     add( &confirm );
     confirm.desc = write ? L"Save" : L"Open";
@@ -2178,7 +2213,7 @@ FileManager::FileManager( bool write )
 
     self.w = 512;
     self.h = 1024;
-    root = L"C:\\Users\\User\\Downloads";
+    root = std::move( initial );
 
     add( &file );
     file.value = root->wstring();
@@ -2373,10 +2408,10 @@ void Hierarchy::update()
     root.y = client.y + 8;
 }
 
-static void filePath( std::function<void( const std::optional<std::filesystem::path>& )> callback, bool save )
+static void filePath( std::function<void( const std::optional<std::filesystem::path>& )> callback, std::filesystem::path path, bool save )
 {
     static std::vector<std::shared_ptr<FileManager>> fms;
-    auto& fm = *fms.emplace_back( std::make_shared<FileManager>( save ) );
+    auto& fm = *fms.emplace_back( std::make_shared<FileManager>( std::move( path ), save ) );
     fm.onClose = [&fm, call = std::move( callback )]()
     {
         call( fm.choice );
@@ -2395,14 +2430,14 @@ static void filePath( std::function<void( const std::optional<std::filesystem::p
     fm.run();
 }
 
-void savePath( std::function<void( const std::optional<std::filesystem::path>& )> callback )
+void savePath( std::function<void( const std::optional<std::filesystem::path>& )> callback, std::filesystem::path path )
 {
-    filePath( std::move( callback ), true );
+    filePath( std::move( callback ), std::move( path ), true );
 }
 
-void openPath( std::function<void( const std::optional<std::filesystem::path>& )> callback )
+void openPath( std::function<void( const std::optional<std::filesystem::path>& )> callback, std::filesystem::path path )
 {
-    filePath( std::move( callback ), false );
+    filePath( std::move( callback ), std::move( path ), false );
 }
 
 void GenericWindow::update()
@@ -2435,9 +2470,9 @@ void GenericWindow::update()
     HBITMAP hOldBmp = ( HBITMAP )SelectObject( hdcMem, hBitmap );
 
     auto *pixels = ( uint32_t * )pBits;
-    for( auto& sample : stack )
+    for( auto& window : stack )
     {
-        auto& desc = sample.window->desc;
+        auto& desc = window->desc;
         desc.update();
         desc.draw( pixels, width, height, 0, 0 );
     }
@@ -2447,9 +2482,9 @@ void GenericWindow::update()
     blend.BlendOp = AC_SRC_OVER;
     blend.SourceConstantAlpha = 255;
     blend.AlphaFormat = AC_SRC_ALPHA;
-    POINT ptZero = {0, 0};
+    POINT point = {0, 0};
     SIZE sizeWindow = {width, height};
-    UpdateLayeredWindow( hndwnd, hdcScreen, nullptr, &sizeWindow, hdcMem, &ptZero, 0, &blend, ULW_ALPHA );
+    UpdateLayeredWindow( hndwnd, hdcScreen, nullptr, &sizeWindow, hdcMem, &point, 0, &blend, ULW_ALPHA );
 
     SelectObject( hdcMem, hOldBmp );
     DeleteObject( hBitmap );
@@ -2462,12 +2497,12 @@ size_t GenericWindow::count()
     return stack.size();
 }
 
-std::vector<GenericWindow::Data> GenericWindow::stack;
+std::vector<std::shared_ptr<GenericWindow>> GenericWindow::stack;
 GenericWindow *GenericWindow::active = nullptr;
 bool GenericWindow::needCleanup = false;
 HWND GenericWindow::hndwnd = nullptr;
 
-GenericWindow::GenericWindow( GraphicInterface::Window &d ) : outputData( d ), desc( d )
+GenericWindow::GenericWindow( GraphicInterface::Window &d, bool l ) : outputData( d ), desc( d ), original( nullptr ), preview( nullptr ), proxy( nullptr ), lock( l )
 {
     desc.closeButton.onClick = [this]( bool release )
     {
@@ -2501,6 +2536,8 @@ GenericWindow::GenericWindow( GraphicInterface::Window &d ) : outputData( d ), d
 
     originalX = originalY = originalW = originalH = 0;
     maximized = false;
+
+    createTab();
 }
 
 GenericWindow::~GenericWindow()
@@ -2508,6 +2545,8 @@ GenericWindow::~GenericWindow()
     desc.closeButton.onClick = nullptr;
     desc.maximizeButton.onClick = nullptr;
     desc.minimizeButton.onClick = nullptr;
+
+    releaseData();
 }
 
 bool GenericWindow::create( GraphicInterface::Window &desc, bool lock )
@@ -2517,6 +2556,7 @@ bool GenericWindow::create( GraphicInterface::Window &desc, bool lock )
     {
         static bool left = false, right = false, top = false, bottom = false;
         static GenericWindow *moving = nullptr, *scaling = nullptr;
+        static bool focus = true;
         static POINT pin;
 
         struct Cursors
@@ -2562,6 +2602,8 @@ bool GenericWindow::create( GraphicInterface::Window &desc, bool lock )
                 };
 
                 cursors.custom = CreateCursor( nullptr, 4, 4, 9, 9, andMask, xorMask );
+
+                SetCursor( cursors.arrow );
             }
             break;
         case WM_DESTROY:
@@ -2576,10 +2618,12 @@ bool GenericWindow::create( GraphicInterface::Window &desc, bool lock )
         case WM_APP:
             break;
         case WM_KILLFOCUS:
-            GenericWindow::killFocus();
+            left = right = top = bottom = false;
+            moving = scaling = nullptr;
+            focus = false;
             break;
         case WM_SETFOCUS:
-            GenericWindow::setFocus();
+            focus = true;
             break;
         case WM_SETCURSOR:
             return TRUE;
@@ -2587,6 +2631,7 @@ bool GenericWindow::create( GraphicInterface::Window &desc, bool lock )
             break;
         case WM_NCMOUSEMOVE:
         case WM_MOUSEMOVE:
+            if( focus )
             {
                 POINT point;
                 GetCursorPos( &point );
@@ -2738,6 +2783,7 @@ bool GenericWindow::create( GraphicInterface::Window &desc, bool lock )
             }
             return 0;
         case WM_CHAR:
+            if( focus )
             {
                 auto& p = wParam;
                 if( p == '-' || p == '/' || p == '\\' || p == '+' || p == '.' || p == '_' || p == '\b' || p == ' ' || ( '0' <= p && p <= '9' ) || ( 'a' <= p && p <= 'z' ) || ( 'A' <= p && p <= 'Z' ) )
@@ -2809,7 +2855,7 @@ bool GenericWindow::create( GraphicInterface::Window &desc, bool lock )
 
         bool system = pressedSystem || releasedSystem;
 
-        if( ( pressed || released ) && !system )
+        if( focus && ( pressed || released ) && !system )
         {
             POINT point;
             GetCursorPos( &point );
@@ -2978,6 +3024,84 @@ bool GenericWindow::create( GraphicInterface::Window &desc, bool lock )
 
         return DefWindowProc( hwnd, message, wParam, lParam );
     };
+    auto proxyProc = []( HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam ) -> LRESULT
+    {
+        auto window = ( GenericWindow* )GetWindowLongPtrW( hwnd, GWLP_USERDATA );
+        auto sync = [&]()
+        {
+            auto& d = window->desc;
+            if( d.visible )
+                ShowWindow( hwnd, SW_SHOWNOACTIVATE );
+            else
+                ShowWindow( hwnd, SW_MINIMIZE );
+            SetWindowPos( hwnd, HWND_BOTTOM, d.x, d.y, d.width(), d.height(), 0 );
+        };
+
+        switch( message )
+        {
+        case WM_CREATE:
+            break;
+        case WM_DESTROY:
+            return 0;
+        case WM_DWMSENDICONICTHUMBNAIL:
+            {
+                if( !window )
+                    break;
+
+                sync();
+
+                UINT maxWidth  = HIWORD( lParam );
+                UINT maxHeight = LOWORD( lParam );
+                HBITMAP bitmap = window->imageScale( maxWidth, maxHeight );
+
+                auto hr = DwmSetIconicThumbnail( hwnd, bitmap, 0 );
+                if( FAILED( hr ) )
+                    MessageBoxW( nullptr, ( L"DwmSetIconicThumbnail: " + std::to_wstring( hr ) ).c_str(), L"Problem", MB_ICONERROR );
+            }
+            return 0;
+        case WM_DWMSENDICONICLIVEPREVIEWBITMAP:
+            {
+                if( !window )
+                    break;
+
+                sync();
+
+                HBITMAP bitmap = window->image();
+
+                POINT pt = {0, 0};
+                auto hr = DwmSetIconicLivePreviewBitmap( hwnd, bitmap, &pt, 0 );
+                if( FAILED( hr ) )
+                    MessageBoxW( nullptr, ( L"DwmSetIconicLivePreviewBitmap: " + std::to_wstring( hr ) ).c_str(), L"Problem", MB_ICONERROR );
+            }
+            return 0;
+        case WM_SYSCOMMAND:
+            if( window && ( wParam & 0xfff0 ) == SC_RESTORE )
+            {
+                auto& d = window->desc;
+                if( !d.visible )
+                {
+                    d.visible = true;
+                    window->focus();
+                    window->update();
+                }
+                return 0;
+            }
+            break;
+        case WM_ACTIVATE:
+            if( LOWORD( wParam ) != WA_INACTIVE )
+            {
+                SetForegroundWindow( GenericWindow::hndwnd );
+                SetFocus( GenericWindow::hndwnd );
+                return 0;
+            }
+            break;
+        case WM_NCHITTEST:
+            return HTTRANSPARENT;
+        default:
+            break;
+        }
+        return DefWindowProc( hwnd, message, wParam, lParam );
+    };
 
     if( desc.x < 0 || desc.y < 0 || desc.self.w < desc.minWidth() || desc.self.h < desc.minHeight() )
     {
@@ -2998,10 +3122,11 @@ bool GenericWindow::create( GraphicInterface::Window &desc, bool lock )
         desc.x = desc.y = Round( Min( shiftX, shiftY ) );
         desc.self.w = width;
         desc.self.h = height;
+
+        desc.update();
     }
 
-    auto& sample = stack.emplace_back( std::make_shared<GenericWindow>( desc ), lock );
-    auto& window = *sample.window;
+    auto& window = *stack.emplace_back( std::make_shared<GenericWindow>( desc, lock ) );
     auto& input = window.inputData;
 
     killFocus();
@@ -3010,9 +3135,9 @@ bool GenericWindow::create( GraphicInterface::Window &desc, bool lock )
     if( hndwnd )
         return false;
 
-    std::wstring className = L"GenericWindowImplementationWinAPI";
-
     WNDCLASSEXW wc;
+    std::wstring className = L"GenericWindowImplementationWinAPI", proxyTab = L"ProxyTab";
+
     clear( &wc, sizeof( wc ) );
     wc.cbSize = sizeof( wc );
     wc.style = CS_HREDRAW | CS_VREDRAW;
@@ -3021,18 +3146,25 @@ bool GenericWindow::create( GraphicInterface::Window &desc, bool lock )
     wc.hCursor = LoadCursorW( nullptr, IDC_ARROW );
     wc.hbrBackground = ( HBRUSH )( COLOR_WINDOW + 1 );
     wc.lpszClassName = className.c_str();
+    makeException( RegisterClassExW( &wc ) );
 
+    clear( &wc, sizeof( wc ) );
+    wc.cbSize = sizeof( wc );
+    wc.lpfnWndProc = proxyProc;
+    wc.hInstance = GetModuleHandleW( nullptr );
+    wc.lpszClassName = proxyTab.c_str();
     makeException( RegisterClassExW( &wc ) );
 
     RECT screenRect;
     GetClientRect( GetDesktopWindow(), &screenRect );
 
-    hndwnd = CreateWindowExW( WS_EX_LAYERED,
+    hndwnd = CreateWindowExW( WS_EX_LAYERED | WS_EX_TOOLWINDOW,
                               className.c_str(), desc.title.value.c_str(), WS_POPUP | WS_VISIBLE,
                               screenRect.left, screenRect.top, screenRect.right - screenRect.left, screenRect.bottom - screenRect.top,
                               nullptr, nullptr, GetModuleHandleW( nullptr ), nullptr );
-
     makeException( hndwnd );
+
+    window.createTab();
 
     input.init = true;
     window.handle();
@@ -3056,6 +3188,7 @@ bool GenericWindow::create( GraphicInterface::Window &desc, bool lock )
     }
 
     UnregisterClassW( className.c_str(), GetModuleHandleW( nullptr ) );
+    UnregisterClassW( proxyTab.c_str(), GetModuleHandleW( nullptr ) );
 
     return true;
 }
@@ -3096,34 +3229,7 @@ void GenericWindow::maximize()
 
 void GenericWindow::minimize()
 {
-    static int lastX = 0;
-
-    if( desc.minimized )
-    {
-        desc.x = originalX;
-        desc.y = originalY;
-        desc.self.w = originalW;
-        desc.self.h = originalH;
-        desc.minimized = false;
-        desc.update();
-    }
-    else
-    {
-        originalX = desc.x;
-        originalY = desc.y;
-        originalW = desc.self.w;
-        originalH = desc.self.h;
-
-        desc.minimized = true;
-        desc.update();
-
-        RECT screenRect;
-        GetClientRect( GetDesktopWindow(), &screenRect );
-
-        desc.y = screenRect.bottom - desc.titlebarHeight - desc.borderWidth; // desc.self.h
-        desc.x = lastX;
-        lastX += 128;
-    }
+    desc.visible = !desc.visible;
 }
 
 bool GenericWindow::handle()
@@ -3148,6 +3254,12 @@ bool GenericWindow::handle()
     }
 
     return response;
+}
+
+void GenericWindow::focus()
+{
+    killFocus();
+    active = this;
 }
 
 void GenericWindow::inputReset()
@@ -3198,11 +3310,131 @@ void GenericWindow::killFocus()
     }
 }
 
+void GenericWindow::createTab()
+{
+    if( proxy )
+        return;
+
+    proxy = CreateWindowExW( WS_EX_TRANSPARENT, L"ProxyTab", desc.title.value.c_str(), WS_POPUP, desc.x, desc.y, desc.width(), desc.height(), nullptr, nullptr, GetModuleHandleW( nullptr ), nullptr );
+    if( !proxy )
+        return;
+
+    ShowWindow( proxy, SW_SHOWNOACTIVATE );
+
+    SetWindowLongPtrW( proxy, GWLP_USERDATA, ( LONG_PTR )this );
+
+    BOOL enabled = FALSE;
+    DwmIsCompositionEnabled( &enabled );
+    makeException( enabled );
+
+    BOOL yes = TRUE;
+    makeException( SUCCEEDED( DwmSetWindowAttribute( proxy, DWMWA_FORCE_ICONIC_REPRESENTATION, &yes, sizeof( yes ) ) ) );
+    makeException( SUCCEEDED( DwmSetWindowAttribute( proxy, DWMWA_HAS_ICONIC_BITMAP, &yes, sizeof( yes ) ) ) );
+
+    makeException( SUCCEEDED( DwmInvalidateIconicBitmaps( proxy ) ) );
+};
+
+void GenericWindow::releaseData()
+{
+    if( proxy )
+        DestroyWindow( proxy );
+    if( original )
+        DeleteObject( original );
+    if( preview )
+        DeleteObject( preview );
+}
+
+HBITMAP GenericWindow::imageScale( int width, int height )
+{
+    if( preview )
+        DeleteObject( preview );
+
+    uint32_t* pixels = nullptr;
+    setupBitmap( width, height, preview, pixels );
+
+    image();
+
+    HDC target = CreateCompatibleDC( nullptr );
+    HGDIOBJ tBitmap = SelectObject( target, preview );
+
+    HDC source = CreateCompatibleDC( target );
+    HGDIOBJ sBitmap = SelectObject( source, original );
+
+    StretchBlt(
+        target, 0, 0, width, height,
+        source, 0, 0, desc.width(), desc.height(),
+        SRCCOPY
+    );
+
+    SelectObject( target, tBitmap );
+    SelectObject( source, sBitmap );
+    DeleteDC( target );
+    DeleteDC( source );
+
+    /*
+    for( int x = 0; x < width; ++x )
+    {
+        for( int y = 0; y < height; ++y )
+        {
+            uint8_t r = 255 * x / ( width - 1 );
+            uint8_t g = 255 * y / ( height - 1 );
+            uint8_t b = 128;
+            pixels[y * width + x] = b | ( g << 8 ) | ( r << 16 ) | ( 255u << 24 );
+        }
+    }
+    */
+
+    return preview;
+};
+
+HBITMAP GenericWindow::image()
+{
+    if( original )
+        DeleteObject( original );
+
+    bool visible = desc.visible;
+    desc.visible = true;
+    desc.update();
+
+    int width = desc.width();
+    int height = desc.height();
+
+    uint32_t* pixels = nullptr;
+    setupBitmap( width, height, original, pixels );
+
+    if( original && pixels )
+        desc.draw( pixels, width, height, -desc.x, -desc.y );
+
+    desc.visible = visible;
+
+    return original;
+};
+
+void GenericWindow::setupBitmap( int width, int height, HBITMAP& bitmap, uint32_t*& pixels )
+{
+    BITMAPINFO bmi;
+    clear( &bmi, sizeof( BITMAPINFO ) );
+    bmi.bmiHeader.biSize = sizeof( BITMAPINFOHEADER );
+    bmi.bmiHeader.biWidth = width;
+    bmi.bmiHeader.biHeight = -height;
+    bmi.bmiHeader.biPlanes = 1;
+    bmi.bmiHeader.biBitCount = 32;
+    bmi.bmiHeader.biCompression = BI_RGB;
+
+    VOID* data = nullptr;
+    HDC hdc = CreateCompatibleDC( nullptr );
+
+    bitmap = CreateDIBSection( hdc, &bmi, DIB_RGB_COLORS, &data, nullptr, 0 );
+    pixels = ( uint32_t* )data;
+
+    DeleteDC( hdc );
+}
+
 void GenericWindow::setFocus()
 {
     killFocus();
     if( !stack.empty() )
-        active = stack[0].window.get();
+        active = stack[0].get();
 }
 
 bool GenericWindow::focus( int x0, int y0 )
@@ -3210,8 +3442,8 @@ bool GenericWindow::focus( int x0, int y0 )
     size_t i = 0;
     while( i < stack.size() )
     {
-        auto& [window, lock] = stack[stack.size() - i - 1];
-        auto& w = *window;
+        auto& w = *stack[stack.size() - i - 1];
+        auto& lock = w.lock;
 
         int x = x0, y = y0;
         w.desc.inner( x, y );
@@ -3266,20 +3498,20 @@ void GenericWindow::cleanup()
 {
     if( needCleanup )
     {
-        std::vector<Data> left;
+        std::vector<std::shared_ptr<GenericWindow>> left;
         std::vector<std::function<void()>> finalizers;
 
-        for( auto& sample : stack )
+        for( auto& window : stack )
         {
-            if( sample.window->outputData.quit )
+            if( window->outputData.quit )
             {
-                if( sample.window.get() == active )
+                if( window.get() == active )
                     active = nullptr;
-                finalizers.emplace_back( sample.window->desc.onClose );
+                finalizers.emplace_back( window->desc.onClose );
             }
             else
             {
-                left.emplace_back( std::move( sample ) );
+                left.emplace_back( std::move( window ) );
             }
         }
 

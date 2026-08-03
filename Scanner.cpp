@@ -38,7 +38,7 @@ bool Scanner::digit() const
 
 bool Scanner::letter() const
 {
-    return ( 'a' <= symbol && symbol <= 'z' ) || ( 'A' <= symbol && symbol <= 'Z' ) || symbol == '_' || symbol == '.';
+    return ( 'a' <= symbol && symbol <= 'z' ) || ( 'A' <= symbol && symbol <= 'Z' ) || symbol == '_';
 }
 
 void Scanner::fillBuffer()
@@ -84,7 +84,7 @@ void Scanner::updatePosition( uint32_t sym )
     }
 }
 
-Scanner::Token::Token( Scanner &scanner_ ): scanner( scanner_ )
+Scanner::Token::Token( Scanner &scn ): scanner( scn )
 {
     t = Nil;
 
@@ -95,41 +95,82 @@ Scanner::Token::Token( Scanner &scanner_ ): scanner( scanner_ )
     line = 0;
 }
 
+Scanner::Token::Token( const Token& other ) : scanner( other.scanner ), t( other.t ), n( other.n ), x( other.x ), s( other.s ), place( other.place ), line( other.line )
+{}
+
+bool Scanner::Token::isSign() const
+{
+    return t == Slash ||
+           t == SlashEquals ||
+           t == BackSlash ||
+           t == Colon ||
+           t == Semicolon ||
+           t == Comma ||
+           t == Dot ||
+           t == Exclamation ||
+           t == ExclamationEquals ||
+           t == Question ||
+           t == Circumflex ||
+           t == CircumflexEquals ||
+           t == NumberSign ||
+           t == Percent ||
+           t == PercentEquals ||
+           t == AtSign ||
+           t == Ampersand ||
+           t == AmpersandEquals ||
+           t == VerticalBar ||
+           t == VerticalBarEquals ||
+           t == Dollar ||
+           t == Tilde ||
+           t == Equals ||
+           t == EqualsEquals ||
+           t == Smaller ||
+           t == SmallerSmaller ||
+           t == SmallerSmallerEquals ||
+           t == Greater ||
+           t == GreaterGreater ||
+           t == GreaterGreaterEquals ||
+           t == SmallerEquals ||
+           t == GreaterEquals ||
+           t == Minus ||
+           t == MinusMinus ||
+           t == MinusMinusPost ||
+           t == MinusMinusPre ||
+           t == MinusEquals ||
+           t == Plus ||
+           t == PlusPlus ||
+           t == PlusPlusPost ||
+           t == PlusPlusPre ||
+           t == PlusEquals ||
+           t == Star ||
+           t == StarEquals ||
+           t == BraceO ||
+           t == BraceC ||
+           t == BracketO ||
+           t == BracketC ||
+           t == ParenthesisO ||
+           t == ParenthesisC;
+}
+
 Unicode::String Scanner::Token::name() const
 {
     Unicode::String result;
-    if( t == Nil )
+    if( t == NoFile )
+        result << L"NoFile";
+    else if( t == Nil )
         result << L"Nil";
-    else if( t == Scanner::Name )
+    else if( t == Name )
         result << L"Name(" << s << L")";
     else if( t == Int )
         result << L"Int(" << s << L")";
     else if( t == Real )
         result << L"Real(" << s << L")";
     else if( t == Text )
-        result << L"Text(" << s << L")";
-    else if( t == Slash )
-        result << L"Slash";
-    else if( t == Colon )
-        result << L"Colon";
-    else if( t == Comma )
-        result << L"Comma";
-    else if( t == BraceO )
-        result << L"BraceO";
-    else if( t == BraceC )
-        result << L"BraceC";
-    else if( t == BracketO )
-        result << L"BracketO";
-    else if( t == BracketC )
-        result << L"BracketC";
-    else if( t == Plus )
-        result << L"Plus";
-    else if( t == Minus )
-        result << L"Minus";
+        result << L"Text('" << s << L"')";
+    else if( isSign() )
+        result << L"Sign('" << s << L"')";
     else if( t == Line )
-        result << L"Line(" << s << L")";
-    else if( t == NoFile )
-        result << L"NoFile";
+        result << L"Line('" << s << L"')";
     else
         result << L"Bad";
     return result;
@@ -138,9 +179,11 @@ Unicode::String Scanner::Token::name() const
 Unicode::String Scanner::Token::description( TokenType t )
 {
     Unicode::String result;
-    if( t == Nil )
-        result << L"end of file";
-    else if( t == Scanner::Name )
+    if( t == NoFile )
+        result << L"data source is missing";
+    else if( t == Nil )
+        result << L"end of data";
+    else if( t == Name )
         result << L"name";
     else if( t == Int )
         result << L"integer";
@@ -148,14 +191,94 @@ Unicode::String Scanner::Token::description( TokenType t )
         result << L"real number";
     else if( t == Text )
         result << L"text";
-    else if( t == Text )
-        result << L"text";
     else if( t == Slash )
         result << L"slash";
+    else if( t == SlashEquals )
+        result << L"divide assignment";
+    else if( t == BackSlash )
+        result << L"back slash";
     else if( t == Colon )
         result << L"colon";
+    else if( t == Semicolon )
+        result << L"semicolon";
     else if( t == Comma )
         result << L"comma";
+    else if( t == Dot )
+        result << L"dot";
+    else if( t == Exclamation )
+        result << L"not";
+    else if( t == ExclamationEquals )
+        result << L"not assignment";
+    else if( t == Question )
+        result << L"question sign";
+    else if( t == Circumflex )
+        result << L"exclusive or";
+    else if( t == CircumflexEquals )
+        result << L"exclusive or assignment";
+    else if( t == NumberSign )
+        result << L"number sign";
+    else if( t == Percent )
+        result << L"remainder";
+    else if( t == PercentEquals )
+        result << L"remainder assignment";
+    else if( t == AtSign )
+        result << L"at sign";
+    else if( t == Ampersand )
+        result << L"and";
+    else if( t == AmpersandEquals )
+        result << L"and assignment";
+    else if( t == VerticalBar )
+        result << L"or";
+    else if( t == VerticalBarEquals )
+        result << L"or assignment";
+    else if( t == Dollar )
+        result << L"dollar sign";
+    else if( t == Tilde )
+        result << L"tilde";
+    else if( t == Equals )
+        result << L"assignment";
+    else if( t == EqualsEquals )
+        result << L"equals";
+    else if( t == Smaller )
+        result << L"smaller";
+    else if( t == SmallerSmaller )
+        result << L"left shift";
+    else if( t == SmallerSmallerEquals )
+        result << L"left shift assignment";
+    else if( t == SmallerEquals )
+        result << L"smaller or equals";
+    else if( t == Greater )
+        result << L"greater";
+    else if( t == GreaterGreater )
+        result << L"right shift";
+    else if( t == GreaterGreaterEquals )
+        result << L"right shift assignment";
+    else if( t == GreaterEquals )
+        result << L"greater or equals";
+    else if( t == Minus )
+        result << L"minus";
+    else if( t == MinusMinus )
+        result << L"decrement";
+    else if( t == MinusMinusPost )
+        result << L"postfix decrement";
+    else if( t == MinusMinusPre )
+        result << L"prefix decrement";
+    else if( t == MinusEquals )
+        result << L"minus assignment";
+    else if( t == Plus )
+        result << L"plus";
+    else if( t == PlusPlus )
+        result << L"increment";
+    else if( t == PlusPlusPost )
+        result << L"postfix increment";
+    else if( t == PlusPlusPre )
+        result << L"prefix increment";
+    else if( t == PlusEquals )
+        result << L"plus assignment";
+    else if( t == Star )
+        result << L"multiplication";
+    else if( t == StarEquals )
+        result << L"multiplication assignment";
     else if( t == BraceO )
         result << L"opening brace";
     else if( t == BraceC )
@@ -164,14 +287,12 @@ Unicode::String Scanner::Token::description( TokenType t )
         result << L"opening bracket";
     else if( t == BracketC )
         result << L"closing bracket";
-    else if( t == Plus )
-        result << L"plus";
-    else if( t == Minus )
-        result << L"minus";
+    else if( t == ParenthesisO )
+        result << L"opening parenthesis";
+    else if( t == ParenthesisC )
+        result << L"closing parenthesis";
     else if( t == Line )
         result << L"line";
-    else if( t == NoFile )
-        result << L"data source is missing";
     else
         result << L"unknown symbol";
     return result;
@@ -301,7 +422,23 @@ void Scanner::getToken()
         token.s.Clear();
         token.s.Add( symbol );
         getSymbol();
+        if( symbol == '=' )
+        {
+            token.s.Add( symbol );
+            getSymbol();
+            token.t = SlashEquals;
+            return;
+        }
         token.t = Slash;
+        return;
+    }
+
+    if( symbol == '\\' )
+    {
+        token.s.Clear();
+        token.s.Add( symbol );
+        getSymbol();
+        token.t = BackSlash;
         return;
     }
 
@@ -311,6 +448,258 @@ void Scanner::getToken()
         token.s.Add( symbol );
         getSymbol();
         token.t = Colon;
+        return;
+    }
+
+    if( symbol == ';' )
+    {
+        token.s.Clear();
+        token.s.Add( symbol );
+        getSymbol();
+        token.t = Semicolon;
+        return;
+    }
+
+    if( symbol == ',' )
+    {
+        token.s.Clear();
+        token.s.Add( symbol );
+        getSymbol();
+        token.t = Comma;
+        return;
+    }
+
+    if( symbol == '.' )
+    {
+        token.s.Clear();
+        token.s.Add( symbol );
+        getSymbol();
+        token.t = Dot;
+        return;
+    }
+
+    if( symbol == '!' )
+    {
+        token.s.Clear();
+        token.s.Add( symbol );
+        getSymbol();
+        if( symbol == '=' )
+        {
+            token.s.Add( symbol );
+            getSymbol();
+            token.t = ExclamationEquals;
+            return;
+        }
+        token.t = Exclamation;
+        return;
+    }
+
+    if( symbol == '?' )
+    {
+        token.s.Clear();
+        token.s.Add( symbol );
+        getSymbol();
+        token.t = Question;
+        return;
+    }
+
+    if( symbol == '^' )
+    {
+        token.s.Clear();
+        token.s.Add( symbol );
+        getSymbol();
+        if( symbol == '=' )
+        {
+            token.s.Add( symbol );
+            getSymbol();
+            token.t = CircumflexEquals;
+            return;
+        }
+        token.t = Circumflex;
+        return;
+    }
+
+    if( symbol == '#' )
+    {
+        token.s.Clear();
+        token.s.Add( symbol );
+        token.t = NumberSign;
+        return;
+    }
+
+    if( symbol == '%' )
+    {
+        token.s.Clear();
+        token.s.Add( symbol );
+        getSymbol();
+        if( symbol == '=' )
+        {
+            token.s.Add( symbol );
+            getSymbol();
+            token.t = PercentEquals;
+            return;
+        }
+        token.t = Percent;
+        return;
+    }
+
+    if( symbol == '@' )
+    {
+        token.s.Clear();
+        token.s.Add( symbol );
+        getSymbol();
+        token.t = AtSign;
+        return;
+    }
+
+    if( symbol == '&' )
+    {
+        token.s.Clear();
+        token.s.Add( symbol );
+        getSymbol();
+        if( symbol == '=' )
+        {
+            token.s.Add( symbol );
+            getSymbol();
+            token.t = AmpersandEquals;
+            return;
+        }
+        token.t = Ampersand;
+        return;
+    }
+
+    if( symbol == '|' )
+    {
+        token.s.Clear();
+        token.s.Add( symbol );
+        getSymbol();
+        if( symbol == '=' )
+        {
+            token.s.Add( symbol );
+            getSymbol();
+            token.t = VerticalBarEquals;
+            return;
+        }
+        token.t = VerticalBar;
+        return;
+    }
+
+    if( symbol == '$' )
+    {
+        token.s.Clear();
+        token.s.Add( symbol );
+        getSymbol();
+        token.t = Dollar;
+        return;
+    }
+
+    if( symbol == '~' )
+    {
+        token.s.Clear();
+        token.s.Add( symbol );
+        getSymbol();
+        token.t = Tilde;
+        return;
+    }
+
+    if( symbol == '~' )
+    {
+        token.s.Clear();
+        token.s.Add( symbol );
+        getSymbol();
+        token.t = Tilde;
+        return;
+    }
+
+    if( symbol == '=' )
+    {
+        token.s.Clear();
+        token.s.Add( symbol );
+        getSymbol();
+        if( symbol == '=' )
+        {
+            token.s.Add( symbol );
+            getSymbol();
+            token.t = EqualsEquals;
+            return;
+        }
+        token.t = Equals;
+        return;
+    }
+
+    if( symbol == '<' )
+    {
+        token.s.Clear();
+        token.s.Add( symbol );
+        getSymbol();
+        if( symbol == '=' )
+        {
+            token.s.Add( symbol );
+            getSymbol();
+            token.t = SmallerEquals;
+            return;
+        }
+        if( symbol == '<' )
+        {
+            token.s.Add( symbol );
+            getSymbol();
+            if( symbol == '=' )
+            {
+                token.s.Add( symbol );
+                getSymbol();
+                token.t = SmallerSmallerEquals;
+                return;
+            }
+            token.t = SmallerSmaller;
+            return;
+        }
+        token.t = Smaller;
+        return;
+    }
+
+    if( symbol == '>' )
+    {
+        token.s.Clear();
+        token.s.Add( symbol );
+        getSymbol();
+        if( symbol == '=' )
+        {
+            token.s.Add( symbol );
+            getSymbol();
+            token.t = GreaterEquals;
+            return;
+        }
+        if( symbol == '>' )
+        {
+            token.s.Add( symbol );
+            getSymbol();
+            if( symbol == '=' )
+            {
+                token.s.Add( symbol );
+                getSymbol();
+                token.t = GreaterGreaterEquals;
+                return;
+            }
+            token.t = GreaterGreater;
+            return;
+        }
+        token.t = Greater;
+        return;
+    }
+
+    if( symbol == '*' )
+    {
+        token.s.Clear();
+        token.s.Add( symbol );
+        getSymbol();
+        if( symbol == '=' )
+        {
+            token.s.Add( symbol );
+            getSymbol();
+            token.t = StarEquals;
+            return;
+        }
+        token.t = Star;
         return;
     }
 
@@ -350,12 +739,21 @@ void Scanner::getToken()
         return;
     }
 
-    if( symbol == ',' )
+    if( symbol == '(' )
     {
         token.s.Clear();
         token.s.Add( symbol );
         getSymbol();
-        token.t = Comma;
+        token.t = ParenthesisO;
+        return;
+    }
+
+    if( symbol == ')' )
+    {
+        token.s.Clear();
+        token.s.Add( symbol );
+        getSymbol();
+        token.t = ParenthesisC;
         return;
     }
 
@@ -387,6 +785,20 @@ void Scanner::getToken()
             neg = true;
             token.s.Add( symbol );
             getSymbol();
+            if( symbol == '=' )
+            {
+                token.s.Add( symbol );
+                getSymbol();
+                token.t = MinusEquals;
+                return;
+            }
+            if( symbol == '-' )
+            {
+                token.s.Add( symbol );
+                getSymbol();
+                token.t = MinusMinus;
+                return;
+            }
             token.t = Minus;
         }
         else if( symbol == '+' )
@@ -394,6 +806,20 @@ void Scanner::getToken()
             neg = false;
             token.s.Add( symbol );
             getSymbol();
+            if( symbol == '=' )
+            {
+                token.s.Add( symbol );
+                getSymbol();
+                token.t = PlusEquals;
+                return;
+            }
+            if( symbol == '+' )
+            {
+                token.s.Add( symbol );
+                getSymbol();
+                token.t = PlusPlus;
+                return;
+            }
             token.t = Plus;
         }
         else
@@ -568,11 +994,16 @@ void Scanner::getLine()
 Unicode::String Scanner::trace()
 {
     Unicode::String output;
+    auto out = [&]()
+    {
+        output << token.name() << ": \"" << Token::description( token.t ) << "\"\n";
+    };
+
     while( token.t != Nil && token.t != Bad && token.t != NoFile )
     {
-        output << token.name() << "\n";
+        out();
         getToken();
     }
-    output << token.name() << "\n";
+    out();
     return output;
 }
