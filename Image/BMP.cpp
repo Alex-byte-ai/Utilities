@@ -607,7 +607,7 @@ void makeBmp( const Reference &ref, bool fileHeader, bool bmpHeader, Format &for
             v4.info.biPlanes = 1;
             v4.info.biBitCount = 32;
             v4.info.biCompression = BI_BITFIELDS;
-            v4.info.biSizeImage = 0;
+            v4.info.biSizeImage = 4 * Abs( fmt.w * fmt.h );
             v4.info.biClrUsed = 0;
             v4.info.biClrImportant = 0;
             v4.bV4RedMask   = 0x00ff0000;

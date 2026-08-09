@@ -27,6 +27,27 @@ void clear( void *destination, unsigned char sample, unsigned bytes )
         std::memset( destination, sample, bytes );
 }
 
+void swap( void* destination, void* source, unsigned bytes )
+{
+    if( destination == source )
+        return;
+
+    char buffer[1024];
+
+    while( bytes > 0 )
+    {
+        unsigned chunk = ( bytes < sizeof( buffer ) ) ? bytes : sizeof( buffer );
+
+        std::memcpy( buffer, destination, chunk );
+        std::memcpy( destination, source, chunk );
+        std::memcpy( source, buffer, chunk );
+
+        destination = ( char* )destination + chunk;
+        source = ( char* )source + chunk;
+        bytes -= chunk;
+    }
+}
+
 bool compare( const void *source0, const void *source1, unsigned bytes )
 {
     if( bytes <= 0 )

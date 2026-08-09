@@ -309,6 +309,7 @@ void copy( void *destination, const void *source, unsigned bytes );
 void move( void *destination, const void *source, unsigned bytes );
 void clear( void *destination, unsigned bytes );
 void clear( void *destination, unsigned char sample, unsigned bytes );
+void swap( void* destination, void* source, unsigned bytes );
 bool compare( const void *source0, const void *source1, unsigned bytes );
 bool compare( const wchar_t *string0, const wchar_t *string1 );
 unsigned stringLength( const char *string );

@@ -82,7 +82,141 @@ private:
 
 namespace GraphicInterface
 {
-static void drawLineR( uint32_t *pixels, int width, int height, int x, int y, int size, uint32_t color )
+
+ConstCanvas::ConstCanvas() : pixels( nullptr ), width( 0 ), height( 0 ), stride( 0 )
+{}
+
+ConstCanvas::ConstCanvas( const uint32_t *p, int w, int h, int s ) : pixels( p ), width( w ), height( h ), stride( s )
+{}
+
+const uint32_t *ConstCanvas::pixel( int x, int y ) const
+{
+    return pixels + ( y * stride + x );
+}
+
+Canvas::Canvas() : pixels( nullptr ), width( 0 ), height( 0 ), stride( 0 )
+{}
+
+Canvas::Canvas( uint32_t *p, int w, int h, int s ) : pixels( p ), width( w ), height( h ), stride( s )
+{}
+
+uint32_t *Canvas::pixel( int x, int y )
+{
+    return pixels + ( y * stride + x );
+}
+
+const uint32_t *Canvas::pixel( int x, int y ) const
+{
+    return pixels + ( y * stride + x );
+}
+
+void Canvas::stain()
+{
+    for( int j = 0; j < height; ++j )
+    {
+        for( int i = 0; i < width; ++i )
+        {
+            auto& p = *pixel( i, j );
+            if( getA( p ) == 0 )
+                p = makeColor( 0, 0, 0, 1 );
+        }
+    }
+}
+
+void Canvas::fill( uint32_t color )
+{
+    for( int j = 0; j < height; ++j )
+    {
+        for( int i = 0; i < width; ++i )
+        {
+            *pixel( i, j ) = color;
+        }
+    }
+}
+
+void Canvas::diamond( uint32_t inner, uint32_t outer )
+{
+    auto inR = getR( inner );
+    auto inG = getG( inner );
+    auto inB = getB( inner );
+    auto inA = getA( inner );
+
+    auto outR = getR( outer );
+    auto outG = getG( outer );
+    auto outB = getB( outer );
+    auto outA = getA( outer );
+
+    for( int j = 0; j < height; ++j )
+    {
+        for( int i = 0; i < width; ++i )
+        {
+            float u = ( i + 0.5 ) / width - 0.5;
+            float v = ( j + 0.5 ) / height - 0.5;
+            float k = Abs( u - v ) + Abs( u + v );
+            if( k < 0 || k > 1 )
+            {
+                *pixel( i, j ) = makeColor( 255, 0, 255, 255 );
+                continue;
+            }
+
+            float r = Round( ( outR - inR ) * k + inR );
+            float g = Round( ( outG - inG ) * k + inG );
+            float b = Round( ( outB - inB ) * k + inB );
+            float a = Round( ( outA - inA ) * k + inA );
+            *pixel( i, j ) = makeColor( r, g, b, a );
+        }
+    }
+}
+
+void Canvas::draw( const ConstCanvas& other, int skipX, int skipY )
+{
+    auto line = width * sizeof( pixels[0] );
+    auto otherPointer = other.pixel( skipX, skipY );
+    auto pointer = pixels;
+
+    for( int j = 0; j < height; ++j )
+    {
+        copy( pointer, otherPointer, line );
+        otherPointer += other.stride;
+        pointer += stride;
+    }
+}
+
+void Canvas::drawBlend( const ConstCanvas& other, int skipX, int skipY )
+{
+    auto otherPointer = other.pixel( skipX, skipY );
+    auto pointer = pixels;
+
+    for( int j = 0; j < height; ++j )
+    {
+        for( int i = 0; i < width; ++i )
+        {
+            auto& result = pointer[i];
+            auto& sample = otherPointer[i];
+
+            auto r = getR( result );
+            auto g = getG( result );
+            auto b = getB( result );
+            auto a = getA( result );
+
+            auto sr = getR( sample );
+            auto sg = getG( sample );
+            auto sb = getB( sample );
+            auto sa = getA( sample );
+
+            r = r * ( 255 - sa ) / 255 + sr;
+            g = g * ( 255 - sa ) / 255 + sg;
+            b = b * ( 255 - sa ) / 255 + sb;
+            a = a * ( 255 - sa ) / 255 + sa;
+
+            result = makeColor( r, g, b, a );
+        }
+        otherPointer += other.stride;
+        pointer += stride;
+    }
+}
+
+void Canvas::drawLineR( int x, int y, int size, uint32_t color )
 {
     if( y < 0 || height <= y )
         return;
@@ -96,10 +230,10 @@ static void drawLineR( uint32_t *pixels, int width, int height, int x, int y, in
         x1 = width;
 
     for( x = x0; x < x1; ++x )
-        pixels[y * width + x] = color;
+        *pixel( x, y ) = color;
 }
 
-static void drawLineD( uint32_t *pixels, int width, int height, int x, int y, int size, uint32_t color )
+void Canvas::drawLineD( int x, int y, int size, uint32_t color )
 {
     if( x < 0 || width <= x )
         return;
@@ -113,10 +247,10 @@ static void drawLineD( uint32_t *pixels, int width, int height, int x, int y, in
         y1 = height;
 
     for( y = y0; y < y1; ++y )
-        pixels[y * width + x] = color;
+        *pixel( x, y ) = color;
 }
 
-static void drawLineRD( uint32_t *pixels, int width, int height, int x, int y, int size, uint32_t color )
+void Canvas::drawLineRD( int x, int y, int size, uint32_t color )
 {
     int b = y - x;
 
@@ -146,12 +280,12 @@ static void drawLineRD( uint32_t *pixels, int width, int height, int x, int y, i
     while( x < x1 )
     {
         y = x + b;
-        pixels[y * width + x] = color;
+        *pixel( x, y ) = color;
         ++x;
     }
 }
 
-static void drawLineRU( uint32_t *pixels, int width, int height, int x, int y, int size, uint32_t color )
+void Canvas::drawLineRU( int x, int y, int size, uint32_t color )
 {
     int b = y + x;
 
@@ -181,9 +315,55 @@ static void drawLineRU( uint32_t *pixels, int width, int height, int x, int y, i
     while( x < x1 )
     {
         y = b - x;
-        pixels[y * width + x] = color;
+        *pixel( x, y ) = color;
         ++x;
     }
+}
+
+Canvas Canvas::trim( int& x0, int& y0, int w, int h, bool change )
+{
+    Canvas result;
+
+    int baseX = x0;
+    int baseY = y0;
+
+    int x1 = x0 + w;
+    int y1 = y0 + h;
+
+    if( x0 < 0 )
+        x0 = 0;
+    if( y0 < 0 )
+        y0 = 0;
+
+    if( x1 > width )
+        x1 = width;
+    if( y1 > height )
+        y1 = height;
+
+    int rh = y1 - y0;
+    if( rh <= 0 )
+        return result;
+
+    int rw = x1 - x0;
+    if( rw <= 0 )
+        return result;
+
+    result.pixels = pixel( x0, y0 );
+    result.width = rw;
+    result.height = rh;
+    result.stride = stride;
+
+    if( change )
+    {
+        x0 -= baseX;
+        y0 -= baseY;
+    }
+    else
+    {
+        x0 = baseX;
+        y0 = baseY;
+    }
+    return result;
 }
 
 static bool renderTextToBuffer(
@@ -444,14 +624,14 @@ bool Group::contains( int x0, int y0 ) const
     return false;
 }
 
-void Group::draw( uint32_t *pixels, int width, int height, int dx, int dy ) const
+void Group::draw( Canvas& canvas, int dx, int dy ) const
 {
     if( !visible )
         return;
 
     outer( dx, dy );
     for( auto object : objects )
-        object->draw( pixels, width, height, dx, dy );
+        object->draw( canvas, dx, dy );
 }
 
 void Group::add( Object *object )
@@ -586,32 +766,6 @@ Box& Box::place( const Box& other )
     return *this;
 }
 
-static void fill( uint32_t *pixels, int width, int height, uint32_t c, int w, int h, int x, int y )
-{
-    int x0 = x;
-    int y0 = y;
-    int x1 = x + w;
-    int y1 = y + h;
-
-    if( x0 < 0 )
-        x0 = 0;
-    if( y0 < 0 )
-        y0 = 0;
-
-    if( x1 > width )
-        x1 = width;
-    if( y1 > height )
-        y1 = height;
-
-    for( int j = y0; j < y1; ++j )
-    {
-        for( int i = x0; i < x1; ++i )
-        {
-            pixels[j * width + i] = c;
-        }
-    }
-}
-
 Trigger::Trigger() : Box()
 {}
 
@@ -621,8 +775,14 @@ Trigger::Trigger( const Trigger& other ) : Object( other ), Box( other )
 Trigger::~Trigger()
 {}
 
-void Trigger::draw( uint32_t *, int, int, int, int ) const
-{}
+void Trigger::draw( Canvas& canvas, int dx, int dy ) const
+{
+    if( !visible )
+        return;
+
+    outer( dx, dy );
+    canvas.trim( dx, dy, w, h ).stain();
+}
 
 Rectangle::Rectangle() : color( 0 )
 {}
@@ -633,13 +793,13 @@ Rectangle::Rectangle( const Rectangle& other ) : Object( other ), Box( other ), 
 Rectangle::~Rectangle()
 {}
 
-void Rectangle::draw( uint32_t *pixels, int width, int height, int dx, int dy ) const
+void Rectangle::draw( Canvas& canvas, int dx, int dy ) const
 {
     if( !visible )
         return;
 
     outer( dx, dy );
-    fill( pixels, width, height, color, w, h, dx, dy );
+    canvas.trim( dx, dy, w, h ).fill( color );
 }
 
 ImageBase::ImageBase() : Box(), bufferW( 0 ), bufferH( 0 )
@@ -694,43 +854,15 @@ void Image::prepare( const void *data, int stride, int height )
     }
 }
 
-void Image::draw( uint32_t *otherPixels, int width, int height, int dx, int dy ) const
+void Image::draw( Canvas& canvas, int dx, int dy ) const
 {
     if( !visible )
         return;
 
     outer( dx, dy );
 
-    int x0 = dx;
-    int y0 = dy;
-    int x1 = x0 + Min( w, bufferW );
-    int y1 = y0 + Min( h, bufferH );
-
-    int bx0 = x0;
-
-    if( x0 < 0 )
-        x0 = 0;
-    if( y0 < 0 )
-        y0 = 0;
-
-    if( x1 > width )
-        x1 = width;
-    if( y1 > height )
-        y1 = height;
-
-    bx0 = x0 - bx0;
-
-    int lineW = x1 - x0;
-    if( lineW <= 0 )
-        return;
-
-    auto line = lineW * sizeof( uint32_t );
-    auto pointer = pixels.data() + bx0;
-    for( int j = y0; j < y1; ++j )
-    {
-        copy( &otherPixels[j * width + x0], pointer, line );
-        pointer += bufferW;
-    }
+    ConstCanvas self( pixels.data(), bufferW, bufferH, bufferW );
+    canvas.trim( dx, dy, bufferW, bufferH, true ).draw( self, dx, dy );
 }
 
 ImageBlend::ImageBlend() : ImageBase()
@@ -766,53 +898,15 @@ void ImageBlend::prepare( const void *data, int stride, int height )
     }
 }
 
-void ImageBlend::draw( uint32_t *otherPixels, int width, int height, int dx, int dy ) const
+void ImageBlend::draw( Canvas& canvas, int dx, int dy ) const
 {
     if( !visible )
         return;
 
     outer( dx, dy );
 
-    int x0 = dx;
-    int y0 = dy;
-    int x1 = x0 + Min( w, bufferW );
-    int y1 = y0 + Min( h, bufferH );
-
-    if( x0 < 0 )
-        x0 = 0;
-    if( y0 < 0 )
-        y0 = 0;
-
-    if( x1 > width )
-        x1 = width;
-    if( y1 > height )
-        y1 = height;
-
-    for( int j = y0; j < y1; ++j )
-    {
-        for( int i = x0; i < x1; ++i )
-        {
-            auto& result = otherPixels[j * width + i];
-            auto& sample = pixels[( j - dy ) * bufferW + ( i - dx )];
-
-            auto r = getR( result );
-            auto g = getG( result );
-            auto b = getB( result );
-            auto a = getA( result );
-
-            auto sr = getR( sample );
-            auto sg = getG( sample );
-            auto sb = getB( sample );
-            auto sa = getA( sample );
-
-            r = r * ( 255 - sa ) / 255 + sr;
-            g = g * ( 255 - sa ) / 255 + sg;
-            b = b * ( 255 - sa ) / 255 + sb;
-            a = a * ( 255 - sa ) / 255 + sa;
-
-            result = makeColor( r, g, b, a );
-        }
-    }
+    ConstCanvas self( pixels.data(), bufferW, bufferH, bufferW );
+    canvas.trim( dx, dy, bufferW, bufferH, true ).drawBlend( self, dx, dy );
 }
 
 StaticText::StaticText() : ImageBlend()
@@ -863,7 +957,7 @@ void DynamicText::prepare( bool write )
     StaticText::prepare();
 }
 
-void DynamicText::draw( uint32_t *canvas, int width, int height, int dx, int dy ) const
+void DynamicText::draw( Canvas& canvas, int dx, int dy ) const
 {
     if( !visible )
         return;
@@ -875,8 +969,9 @@ void DynamicText::draw( uint32_t *canvas, int width, int height, int dx, int dy 
 
     int x1 = dx, y1 = dy;
     outer( dx, dy );
-    fill( canvas, width, height, background, w, h, dx, dy );
-    StaticText::draw( canvas, width, height, x1, y1 );
+
+    canvas.trim( dx, dy, w, h ).fill( background );
+    StaticText::draw( canvas, x1, y1 );
 }
 
 bool DynamicText::hover( int, int )
@@ -942,7 +1037,7 @@ size_t Combobox::select( int x0, int y0 )
     return ( y0 - y ) / 16;
 }
 
-void Combobox::draw( uint32_t *pixels, int width, int height, int dx, int dy ) const
+void Combobox::draw( Canvas& canvas, int dx, int dy ) const
 {
     if( !visible )
         return;
@@ -962,12 +1057,12 @@ void Combobox::draw( uint32_t *pixels, int width, int height, int dx, int dy ) c
         area.color = c;
         area.x = 0;
         area.y = i * 16;
-        area.draw( pixels, width, height, dx, dy );
+        area.draw( canvas, dx, dy );
         text.value = std::move( o );
         text.prepare();
         text.x = area.x + ( w - text.w ) * 0.5;
         text.y = area.y + ( 16 - text.h ) * 0.5;
-        text.draw( pixels, width, height, dx, dy );
+        text.draw( canvas, dx, dy );
     };
 
     if( isOpen )
@@ -1048,7 +1143,7 @@ ActiveTrigger::ActiveTrigger( const ActiveTrigger& other ) : Object( other ), Bu
 ActiveTrigger::~ActiveTrigger()
 {}
 
-void ActiveTrigger::draw( uint32_t *, int, int, int, int ) const
+void ActiveTrigger::draw( Canvas&, int, int ) const
 {}
 
 TextButton::TextButton() : Button(), centerX( true ), centerY( true )
@@ -1060,7 +1155,7 @@ TextButton::TextButton( const TextButton& other ) : Object( other ), Button( oth
 TextButton::~TextButton()
 {}
 
-void TextButton::draw( uint32_t *pixels, int width, int height, int dx, int dy ) const
+void TextButton::draw( Canvas& canvas, int dx, int dy ) const
 {
     if( !visible || w <= 0 || h <= 0 )
         return;
@@ -1068,7 +1163,7 @@ void TextButton::draw( uint32_t *pixels, int width, int height, int dx, int dy )
     outer( dx, dy );
 
     auto color = hovered && !off ? makeColor( 220, 220, 60, 255 ) : makeColor( 200, 200, 200, 255 );
-    fill( pixels, width, height, color, w, h, dx, dy );
+    canvas.trim( dx, dy, w, h ).fill( color );
 
     StaticText text;
     text.color = off ? makeColor( 128, 128, 128, 255 ) : makeColor( 0, 0, 0, 255 );
@@ -1079,12 +1174,12 @@ void TextButton::draw( uint32_t *pixels, int width, int height, int dx, int dy )
     text.x = centerX ? ( w - text.w ) * 0.5 : 16;
     text.y = centerY ? ( h - text.h ) * 0.5 : 16;
 
-    text.draw( pixels, width, height, dx, dy );
+    text.draw( canvas, dx, dy );
 
     if( onHover )
     {
-        drawLineRD( pixels, width, height, dx + w - 16, dy + 4, 4, text.color );
-        drawLineRU( pixels, width, height, dx + w - 16, dy + h - 5, 4, text.color );
+        canvas.drawLineRD( dx + w - 16, dy + 4, 4, text.color );
+        canvas.drawLineRU( dx + w - 16, dy + h - 5, 4, text.color );
     }
 }
 
@@ -1097,7 +1192,7 @@ MinimizeButton::MinimizeButton( const MinimizeButton& other ) : Object( other ),
 MinimizeButton::~MinimizeButton()
 {}
 
-void MinimizeButton::draw( uint32_t *pixels, int width, int height, int dx, int dy ) const
+void MinimizeButton::draw( Canvas& canvas, int dx, int dy ) const
 {
     if( !visible )
         return;
@@ -1105,11 +1200,11 @@ void MinimizeButton::draw( uint32_t *pixels, int width, int height, int dx, int 
     outer( dx, dy );
 
     auto color = hovered ? makeColor( 235, 235, 235, 255 ) : makeColor( 255, 255, 255, 255 );
-    fill( pixels, width, height, color, w, h, dx, dy );
+    canvas.trim( dx, dy, w, h ).fill( color );
 
     auto black = makeColor( 0, 0, 0, 255 );
 
-    drawLineR( pixels, width, height, dx + 3, dy + h / 2 - 1, w - 6, black );
+    canvas.drawLineR( dx + 3, dy + h / 2 - 1, w - 6, black );
 }
 
 MaximizeButton::MaximizeButton() : Button()
@@ -1121,7 +1216,7 @@ MaximizeButton::MaximizeButton( const MaximizeButton& other ) : Object( other ),
 MaximizeButton::~MaximizeButton()
 {}
 
-void MaximizeButton::draw( uint32_t *pixels, int width, int height, int dx, int dy ) const
+void MaximizeButton::draw( Canvas& canvas, int dx, int dy ) const
 {
     if( !visible )
         return;
@@ -1129,20 +1224,20 @@ void MaximizeButton::draw( uint32_t *pixels, int width, int height, int dx, int 
     outer( dx, dy );
 
     auto color = hovered ? makeColor( 235, 235, 235, 255 ) : makeColor( 255, 255, 255, 255 );
-    fill( pixels, width, height, color, w, h, dx, dy );
+    canvas.trim( dx, dy, w, h ).fill( color );
 
     auto black = makeColor( 0, 0, 0, 255 );
     auto half = hovered ? makeColor( 188, 188, 188, 255 ) : makeColor( 204, 204, 204, 255 );
 
-    drawLineR( pixels, width, height, dx + 4, dy + 4, w - 8, half );
-    drawLineD( pixels, width, height, dx + 4, dy + 4, w - 8, half );
-    drawLineR( pixels, width, height, dx + 4, dy + h - 5, w - 8, half );
-    drawLineD( pixels, width, height, dx + w - 5, dy + 4, w - 8, half );
+    canvas.drawLineR( dx + 4, dy + 4, w - 8, half );
+    canvas.drawLineD( dx + 4, dy + 4, w - 8, half );
+    canvas.drawLineR( dx + 4, dy + h - 5, w - 8, half );
+    canvas.drawLineD( dx + w - 5, dy + 4, w - 8, half );
 
-    drawLineR( pixels, width, height, dx + 3, dy + 3, w - 6, black );
-    drawLineD( pixels, width, height, dx + 3, dy + 3, w - 6, black );
-    drawLineR( pixels, width, height, dx + 3, dy + h - 4, w - 6, black );
-    drawLineD( pixels, width, height, dx + w - 4, dy + 3, w - 6, black );
+    canvas.drawLineR( dx + 3, dy + 3, w - 6, black );
+    canvas.drawLineD( dx + 3, dy + 3, w - 6, black );
+    canvas.drawLineR( dx + 3, dy + h - 4, w - 6, black );
+    canvas.drawLineD( dx + w - 4, dy + 3, w - 6, black );
 }
 
 CloseButton::CloseButton() : Button()
@@ -1154,7 +1249,7 @@ CloseButton::CloseButton( const CloseButton& other ) : Object( other ), Button( 
 CloseButton::~CloseButton()
 {}
 
-void CloseButton::draw( uint32_t *pixels, int width, int height, int dx, int dy ) const
+void CloseButton::draw( Canvas& canvas, int dx, int dy ) const
 {
     if( !visible )
         return;
@@ -1162,19 +1257,19 @@ void CloseButton::draw( uint32_t *pixels, int width, int height, int dx, int dy 
     outer( dx, dy );
 
     auto color = hovered ? makeColor( 245, 10, 10, 255 ) : makeColor( 255, 255, 255, 255 );
-    fill( pixels, width, height, color, w, h, dx, dy );
+    canvas.trim( dx, dy, w, h ).fill( color );
 
     auto black = makeColor( 0, 0, 0, 255 );
     auto half = hovered ? makeColor( 196, 8, 8, 255 ) : makeColor( 204, 204, 204, 255 );
 
-    drawLineRD( pixels, width, height, dx + 4, dy + 3, w - 7, half );
-    drawLineRU( pixels, width, height, dx + 4, dy + h - 4, w - 7, half );
+    canvas.drawLineRD( dx + 4, dy + 3, w - 7, half );
+    canvas.drawLineRU( dx + 4, dy + h - 4, w - 7, half );
 
-    drawLineRD( pixels, width, height, dx + 3, dy + 4, w - 7, half );
-    drawLineRU( pixels, width, height, dx + 3, dy + h - 5, w - 7, half );
+    canvas.drawLineRD( dx + 3, dy + 4, w - 7, half );
+    canvas.drawLineRU( dx + 3, dy + h - 5, w - 7, half );
 
-    drawLineRD( pixels, width, height, dx + 3, dy + 3, w - 6, black );
-    drawLineRU( pixels, width, height, dx + 3, dy + h - 4, w - 6, black );
+    canvas.drawLineRD( dx + 3, dy + 3, w - 6, black );
+    canvas.drawLineRU( dx + 3, dy + h - 4, w - 6, black );
 }
 
 PlusButton::PlusButton() : Button(), toggle( false )
@@ -1201,7 +1296,7 @@ void PlusButton::setDefaultCallback()
     };
 }
 
-void PlusButton::draw( uint32_t *pixels, int width, int height, int dx, int dy ) const
+void PlusButton::draw( Canvas& canvas, int dx, int dy ) const
 {
     if( !visible )
         return;
@@ -1209,7 +1304,7 @@ void PlusButton::draw( uint32_t *pixels, int width, int height, int dx, int dy )
     outer( dx, dy );
 
     auto color = hovered && !off ? makeColor( 220, 220, 60, 255 ) : makeColor( 200, 200, 200, 255 );
-    fill( pixels, width, height, color, w, h, dx, dy );
+    canvas.trim( dx, dy, w, h ).fill( color );
 
     StaticText text;
     text.color = off ? makeColor( 128, 128, 128, 255 ) : makeColor( 0, 0, 0, 255 );
@@ -1220,11 +1315,11 @@ void PlusButton::draw( uint32_t *pixels, int width, int height, int dx, int dy )
     text.x = w + 9;
     text.y = ( h - text.h ) * 0.5;
 
-    text.draw( pixels, width, height, dx, dy );
+    text.draw( canvas, dx, dy );
 
-    drawLineR( pixels, width, height, dx + 2, dy + h / 2, w - 4, makeColor( 0, 0, 0, 255 ) );
+    canvas.drawLineR( dx + 2, dy + h / 2, w - 4, makeColor( 0, 0, 0, 255 ) );
     if( !toggle )
-        drawLineD( pixels, width, height, dx + w / 2, dy + 2, h - 4, makeColor( 0, 0, 0, 255 ) );
+        canvas.drawLineD( dx + w / 2, dy + 2, h - 4, makeColor( 0, 0, 0, 255 ) );
 }
 
 DropArea::DropArea()
@@ -1236,7 +1331,7 @@ DropArea::DropArea( const DropArea& other ) : Object( other ), Button( other )
 DropArea::~DropArea()
 {}
 
-void DropArea::draw( uint32_t *pixels, int width, int height, int dx, int dy ) const
+void DropArea::draw( Canvas& canvas, int dx, int dy ) const
 {
     if( !visible )
         return;
@@ -1244,8 +1339,184 @@ void DropArea::draw( uint32_t *pixels, int width, int height, int dx, int dy ) c
     if( hovered )
     {
         outer( dx, dy );
-        fill( pixels, width, height, makeColor( 255, 255, 0, 255 ), w, h, dx, dy );
+        canvas.trim( dx, dy, w, h ).fill( makeColor( 255, 255, 0, 255 ) );
     }
+}
+
+Scroller::Scroller() : horizontal( 0.3f ), vertical( 0.3f ), content( nullptr ), size( 8 )
+{}
+
+Scroller::Scroller( const Scroller& other ) : Object( other ), Box( other ), Active( other ), horizontal( other.horizontal ), vertical( other.vertical ), content( other.content ), size( other.size )
+{}
+
+void Scroller::calculate()
+{
+    s.tw = content->width();
+    s.th = content->height();
+
+    s.ok = true;
+    if( s.tw < size || s.th < size )
+    {
+        s.ok = false;
+        return;
+    }
+
+    s.xside = w - size;
+    s.yside = h - size;
+
+    s.cw = s.tw;
+    s.ch = s.th;
+
+    s.sw = w - s.cw;
+    s.hscroll = s.sw < 0;
+
+    s.sh = h - s.ch - ( s.hscroll ? size : 0 );
+    s.vscroll = s.sh < 0;
+
+    if( s.vscroll )
+    {
+        s.sw -= size;
+        s.hscroll = s.sw < 0;
+    }
+
+    s.sw = s.hscroll ? 0 : s.sw;
+    s.sh = s.vscroll ? 0 : s.sh;
+
+    s.cw = w - s.sw - ( s.vscroll ? size : 0 );
+    s.ch = h - s.sh - ( s.hscroll ? size : 0 );
+
+    s.sw /= 2;
+    s.sh /= 2;
+
+    s.sizeh =  RoundDown( s.cw * s.cw / float( s.tw ) );
+    s.posh = s.hscroll ? RoundDown( horizontal * ( s.cw - s.sizeh ) ) : 0;
+
+    s.sizev =  RoundDown( s.ch * s.ch / float( s.th ) );
+    s.posv = s.vscroll ? RoundDown( vertical * ( s.ch - s.sizev ) ) : 0;
+}
+
+void Scroller::scroll( int& dx, int& dy ) const
+{
+    dx += s.hscroll ? Round( horizontal * ( s.tw - s.cw ) ) : 0;
+    dy += s.vscroll ? Round( vertical * ( s.th - s.ch ) ) : 0;
+}
+
+bool Scroller::contains( int x0, int y0 ) const
+{
+    inner( x0, y0 );
+
+    if( x0 < 0 || w <= x0 || y0 < 0 || h <= y0 )
+        return false;
+
+    if( !s.ok )
+        return false;
+
+    if( x0 < s.cw && y0 < s.ch )
+    {
+        scroll( x0, y0 );
+        return content->contains( x0, y0 );
+    }
+
+    return true;
+}
+
+bool Scroller::hover( int x0, int y0 )
+{
+    if( !s.ok )
+        return false;
+
+    inner( x0, y0 );
+
+    if( holdx )
+    {
+        horizontal = ( x0 - *holdx ) / float( s.cw - s.sizeh );
+        if( horizontal < 0.0f )
+            horizontal = 0.0f;
+        else if( horizontal > 1.0f )
+            horizontal = 1.0f;
+        return true;
+    }
+    if( holdy )
+    {
+        vertical = ( y0 - *holdy ) / float( s.ch - s.sizev ) ;
+        if( vertical < 0.0f )
+            vertical = 0.0f;
+        else if( vertical > 1.0f )
+            vertical = 1.0f;
+        return true;
+    }
+
+    return false;
+}
+
+bool Scroller::click( bool release, int x0, int y0 )
+{
+    if( release )
+    {
+        release = holdx || holdy;
+        holdx.reset();
+        holdy.reset();
+        return release;
+    }
+
+    if( !s.ok )
+        return false;
+
+    inner( x0, y0 );
+
+    if( s.posh <= x0 && x0 < s.posh + s.sizeh && s.yside <= y0 && y0 < s.yside + size )
+    {
+        holdx = x0 - s.posh;
+        release = true;
+    }
+    if( s.xside <= x0 && x0 < s.xside + size && s.posv <= y0 && y0 < s.posv + s.sizev )
+    {
+        holdy = y0 - s.posv;
+        release = true;
+    }
+
+    return release;
+}
+
+bool Scroller::input( wchar_t )
+{
+    return false;
+}
+
+void Scroller::draw( Canvas& canvas, int dx, int dy ) const
+{
+    if( !visible || !content || !s.ok || w <= 0 || h <= 0 )
+        return;
+
+    outer( dx, dy );
+
+    auto c = s;
+    c.xside += dx;
+    c.yside += dy;
+    c.posh += dx;
+    c.posv += dy;
+
+    if( s.hscroll )
+    {
+        canvas.trim( dx, c.yside, c.cw, size ).fill( makeColor( 63, 63, 63, 255 ) );
+        canvas.trim( c.posh, c.yside, c.sizeh, size ).fill( makeColor( 127, 127, 127, 255 ) );
+    }
+
+    if( s.vscroll )
+    {
+        canvas.trim( c.xside, dy, size, c.ch ).fill( makeColor( 63, 63, 63, 255 ) );
+        canvas.trim( c.xside, c.posv, size, c.sizev ).fill( makeColor( 127, 127, 127, 255 ) );
+    }
+
+    if( s.hscroll && s.vscroll )
+        canvas.trim( c.xside, c.yside, size, size ).diamond( makeColor( 255, 255, 255, 255 ), makeColor( 0, 0, 0, 255 ) );
+
+    dx += c.sw;
+    dy += c.sh;
+
+    auto part = canvas.trim( dx, dy, c.cw, c.ch, true );
+    scroll( dx, dy );
+    content->draw( part, -dx, -dy );
 }
 
 static bool isPostfix( const std::vector<size_t>& postfix, const std::vector<size_t>& vector )
@@ -1462,9 +1733,6 @@ std::shared_ptr<Node> Node::detach()
     return result;
 }
 
-Scroller::Scroller() : content( nullptr )
-{}
-
 ChangedValue<bool> &Keys::letter( char symbol )
 {
     makeException( 'A' <= symbol && symbol <= 'Z' );
@@ -1516,9 +1784,10 @@ Window::Window( int th, int sz, int bh, int tgw, int b )
     titleBar.color = makeColor( 255, 255, 255, 255 );
     leftBorder.color = rightBorder.color = topBorder.color = bottomBorder.color = makeColor( 85, 85, 85, 255 );
 
+    scroller.content = &content;
     add( &self );
     add( &client );
-    add( &content );
+    add( &scroller );
     add( &titleBar );
     add( &icon );
     add( &title );
@@ -1540,17 +1809,18 @@ Window::Window( const Window &other ) :
     titlebarHeight( other.titlebarHeight ), buttonSize( other.buttonSize ), buttonSpacingH( other.buttonSpacingH ),
     triggerWidth( other.triggerWidth ), borderWidth( other.borderWidth ),
     self( other.self ), topTrigger( other.topTrigger ), bottomTrigger( other.bottomTrigger ), leftTrigger( other.leftTrigger ), rightTrigger( other.rightTrigger ),
-    titleBar( other.titleBar ), leftBorder( other.leftBorder ), rightBorder( other.rightBorder ), topBorder( other.topBorder ), bottomBorder( other.bottomBorder ), client( other.client ),
-    icon( other.icon ), content( other.content ), title( other.title ),
+    titleBar( other.titleBar ), leftBorder( other.leftBorder ), rightBorder( other.rightBorder ), topBorder( other.topBorder ), bottomBorder( other.bottomBorder ),
+    client( other.client ), icon( other.icon ), content( other.content ), scroller( other.scroller ), title( other.title ),
     minimizeButton( other.minimizeButton ), maximizeButton( other.maximizeButton ), closeButton( other.closeButton )
 {
     minimizeButton.onClick = nullptr;
     maximizeButton.onClick = nullptr;
     closeButton.onClick = nullptr;
 
+    scroller.content = &content;
     add( &self );
     add( &client );
-    add( &content );
+    add( &scroller );
     add( &titleBar );
     add( &icon );
     add( &title );
@@ -1574,7 +1844,7 @@ Window::~Window()
 int Window::minWidth() const
 {
     auto titleBarMinWidth = 3 * buttonSize + buttonSpacingV + 3 * buttonSpacingH + borderWidth + icon.x + icon.w;
-    auto minWidth = content.w + 2 * borderWidth;
+    auto minWidth = 2 * borderWidth;
 
     if( titleBarMinWidth > minWidth )
         return titleBarMinWidth;
@@ -1584,7 +1854,7 @@ int Window::minWidth() const
 
 int Window::minHeight() const
 {
-    return titlebarHeight + content.h + 2 * borderWidth;
+    return titlebarHeight + 2 * borderWidth;
 }
 
 void Window::update()
@@ -1594,24 +1864,24 @@ void Window::update()
     titleBar.w = self.w;
     titleBar.h = titlebarHeight + borderWidth;
 
-    leftTrigger.x = self.x;
-    leftTrigger.y = self.y;
+    leftTrigger.x = self.x - triggerWidth;
+    leftTrigger.y = self.y - triggerWidth;
     leftTrigger.w = triggerWidth;
-    leftTrigger.h = self.h;
+    leftTrigger.h = self.h + 2 * triggerWidth;
 
-    rightTrigger.x = self.x + self.w - triggerWidth;
-    rightTrigger.y = self.y;
+    rightTrigger.x = self.x + self.w;
+    rightTrigger.y = self.y - triggerWidth;
     rightTrigger.w = triggerWidth;
-    rightTrigger.h = self.h;
+    rightTrigger.h = self.h + 2 * triggerWidth;
 
-    topTrigger.x = self.x;
-    topTrigger.y = self.y;
-    topTrigger.w = self.w;
+    topTrigger.x = self.x - triggerWidth;
+    topTrigger.y = self.y - triggerWidth;
+    topTrigger.w = self.w + 2 * triggerWidth;
     topTrigger.h = triggerWidth;
 
-    bottomTrigger.x = self.x;
-    bottomTrigger.y = self.y + self.h - triggerWidth;
-    bottomTrigger.w = self.w;
+    bottomTrigger.x = self.x - triggerWidth;
+    bottomTrigger.y = self.y + self.h;
+    bottomTrigger.w = self.w + 2 * triggerWidth;
     bottomTrigger.h = triggerWidth;
 
     leftBorder.x = self.x;
@@ -1659,40 +1929,15 @@ void Window::update()
     client.y = self.y + borderWidth + titlebarHeight;
     client.w = self.w - 2 * borderWidth;
     client.h = self.h - titlebarHeight - 2 * borderWidth;
+    client.color = content.bufferW > 0 && content.bufferH > 0 ? makeColor( 60, 70, 200, 255 ) : makeColor( 170, 170, 170, 255 );
 
-    content.w = content.bufferW;
-    content.h = content.bufferH;
+    scroller.place( client );
+    scroller.calculate();
 
-    content.x = ( client.w - content.w ) / 2;
-    content.y = ( client.h - content.h ) / 2;
-
-    if( content.x <= 0 )
-    {
-        content.x = 0;
-        content.w = client.w;
-    }
-
-    if( content.y <= 0 )
-    {
-        content.y = 0;
-        content.h = client.h;
-    }
-
-    content.x += borderWidth;
-    content.y += borderWidth + titlebarHeight;
-
-    if( content.w > 0 && content.h > 0 )
-    {
-        client.color = makeColor( 60, 70, 200, 255 );
-    }
-    else
-    {
-        content.w = 0;
-        content.h = 0;
-        client.color = makeColor( 170, 170, 170, 255 );
-    }
-
-    mouseTrigger.place( content );
+    mouseTrigger.x = scroller.x + scroller.s.sw;
+    mouseTrigger.y = scroller.y + scroller.s.sh;
+    mouseTrigger.w = scroller.s.cw;
+    mouseTrigger.h = scroller.s.ch;
 }
 
 bool Window::run( bool lock )
@@ -2410,6 +2655,12 @@ void Hierarchy::update()
 
 static void filePath( std::function<void( const std::optional<std::filesystem::path>& )> callback, std::filesystem::path path, bool save )
 {
+    if( path.empty() )
+    {
+        path = std::getenv( "USERPROFILE" );
+        path /= L"Downloads";
+    }
+
     static std::vector<std::shared_ptr<FileManager>> fms;
     auto& fm = *fms.emplace_back( std::make_shared<FileManager>( std::move( path ), save ) );
     fm.onClose = [&fm, call = std::move( callback )]()
@@ -2472,9 +2723,11 @@ void GenericWindow::update()
     auto *pixels = ( uint32_t * )pBits;
     for( auto& window : stack )
     {
+        GraphicInterface::Canvas canvas( pixels, width, height, width );
         auto& desc = window->desc;
+
         desc.update();
-        desc.draw( pixels, width, height, 0, 0 );
+        desc.draw( canvas, 0, 0 );
     }
 
     BLENDFUNCTION blend;
@@ -2556,8 +2809,8 @@ bool GenericWindow::create( GraphicInterface::Window &desc, bool lock )
     {
         static bool left = false, right = false, top = false, bottom = false;
         static GenericWindow *moving = nullptr, *scaling = nullptr;
-        static bool focus = true;
-        static POINT pin;
+        static bool focus = false;
+        static POINT pin = {};
 
         struct Cursors
         {
@@ -2702,6 +2955,19 @@ bool GenericWindow::create( GraphicInterface::Window &desc, bool lock )
                             scaling->desc.self.w = minWidth;
                         }
                     }
+
+                    GenericWindow::process( [&]( auto & w )
+                    {
+                        w.desc.update();
+                        w.inputData.width = w.desc.client.w;
+                        w.inputData.height = w.desc.client.h;
+                        w.inputData.scale = true;
+                        bool result = w.handle();
+                        w.inputData.scale = false;
+                        return result;
+                    } );
+
+                    GenericWindow::cleanup();
                     GenericWindow::update();
                     return 0;
                 }
@@ -2767,6 +3033,7 @@ bool GenericWindow::create( GraphicInterface::Window &desc, bool lock )
                         SetCursor( cursors.custom );
 
                         w.desc.mouseTrigger.inner( x, y );
+                        w.desc.scroller.scroll( x, y );
                         w.inputData.mouseX = x;
                         w.inputData.mouseY = y;
                         return w.handle();
@@ -2786,11 +3053,18 @@ bool GenericWindow::create( GraphicInterface::Window &desc, bool lock )
             if( focus )
             {
                 auto& p = wParam;
-                if( p == '-' || p == '/' || p == '\\' || p == '+' || p == '.' || p == '_' || p == '\b' || p == ' ' || ( '0' <= p && p <= '9' ) || ( 'a' <= p && p <= 'z' ) || ( 'A' <= p && p <= 'Z' ) )
+                bool sign = p == L' ' || p == L'\b' || p == L'_' || p == L'-' || p == L'+' || p == L'/' || p == L'\\' || p == L'.' || p == L',' || p == L':' || p == L';' || p == L'!' || p == L'?';
+                bool letter = ( L'a' <= p && p <= L'z' ) || ( L'A' <= p && p <= L'Z' );
+                bool number = L'0' <= p && p <= L'9';
+                if( sign || letter || number )
                 {
                     bool response = GenericWindow::process( [&]( auto & w )
                     {
-                        return w.desc.input( p );
+                        w.inputData.typed = p;
+                        bool f0 = w.desc.input( p );
+                        bool f1 = w.handle();
+                        w.inputData.typed = L'\0';
+                        return f0 || f1;
                     } );
                     if( !response )
                         break;
@@ -3132,6 +3406,12 @@ bool GenericWindow::create( GraphicInterface::Window &desc, bool lock )
     killFocus();
     active = &window;
 
+    input.init = true;
+    input.width = desc.client.w;
+    input.height = desc.client.h;
+    window.handle();
+    input.init = false;
+
     if( hndwnd )
         return false;
 
@@ -3165,10 +3445,6 @@ bool GenericWindow::create( GraphicInterface::Window &desc, bool lock )
     makeException( hndwnd );
 
     window.createTab();
-
-    input.init = true;
-    window.handle();
-    input.init = false;
 
     update();
 
@@ -3403,7 +3679,10 @@ HBITMAP GenericWindow::image()
     setupBitmap( width, height, original, pixels );
 
     if( original && pixels )
-        desc.draw( pixels, width, height, -desc.x, -desc.y );
+    {
+        GraphicInterface::Canvas canvas( pixels, width, height, width );
+        desc.draw( canvas, -desc.x, -desc.y );
+    }
 
     desc.visible = visible;
 

@@ -28,10 +28,14 @@ bool output( const Item &item )
         CloseClipboard();
     } );
 
+    ImageConvert::Reference image;
+    image.fill();
+    image.format = ".DIB";
+
     UINT type;
     SIZE_T size;
     const void *data = nullptr;
-    std::visit( [&type, &size, &data]( const auto & option )
+    std::visit( [&]( const auto & option )
     {
         using T = std::decay_t<decltype( option )>;
 
@@ -43,8 +47,9 @@ bool output( const Item &item )
         }
         else if constexpr( std::is_same_v<T, Image> )
         {
-            size = option.bytes;
-            data = option.link;
+            translate( option, image, false );
+            size = image.bytes;
+            data = image.link;
             type = CF_DIB;
         }
     }, item );

@@ -11,6 +11,42 @@
 
 namespace GraphicInterface
 {
+struct ConstCanvas
+{
+    const uint32_t *pixels;
+    int width, height, stride;
+
+    ConstCanvas();
+    ConstCanvas( const uint32_t *pixels, int width, int height, int stride );
+
+    const uint32_t *pixel( int x, int y ) const;
+};
+
+struct Canvas
+{
+    uint32_t *pixels;
+    int width, height, stride;
+
+    Canvas();
+    Canvas( uint32_t *pixels, int width, int height, int stride );
+
+    uint32_t *pixel( int x, int y );
+    const uint32_t *pixel( int x, int y ) const;
+
+    void stain();
+    void fill( uint32_t color );
+    void diamond( uint32_t inner, uint32_t outer );
+    void draw( const ConstCanvas& other, int skipX, int skipY );
+    void drawBlend( const ConstCanvas& other, int skipX, int skipY );
+
+    void drawLineR( int x, int y, int size, uint32_t color );
+    void drawLineD( int x, int y, int size, uint32_t color );
+    void drawLineRD( int x, int y, int size, uint32_t color );
+    void drawLineRU( int x, int y, int size, uint32_t color );
+
+    Canvas trim( int& x0, int& y0, int w, int h, bool change = false );
+};
+
 struct Object
 {
     Object();
@@ -27,7 +63,7 @@ struct Object
     virtual int height() const = 0;
     virtual bool contains( int x, int y ) const = 0;
 
-    virtual void draw( uint32_t *pixels, int width, int height, int x, int y ) const = 0;
+    virtual void draw( Canvas& canvas, int x, int y ) const = 0;
 };
 
 struct Group : virtual public Object
@@ -40,7 +76,7 @@ struct Group : virtual public Object
     virtual int height() const override;
     virtual bool contains( int x, int y ) const override;
 
-    virtual void draw( uint32_t *pixels, int width, int height, int x, int y ) const override;
+    virtual void draw( Canvas& canvas, int x, int y ) const override;
 
     void add( Object *object );
     void remove( Object *object );
@@ -101,7 +137,7 @@ struct Trigger : public Box
     Trigger( const Trigger& other );
     virtual ~Trigger();
 
-    virtual void draw( uint32_t *pixels, int width, int height, int x, int y ) const override;
+    virtual void draw( Canvas& canvas, int x, int y ) const override;
 };
 
 struct Rectangle : public Box
@@ -112,7 +148,7 @@ struct Rectangle : public Box
 
     uint32_t color;
 
-    virtual void draw( uint32_t *pixels, int width, int height, int x, int y ) const override;
+    virtual void draw( Canvas& canvas, int x, int y ) const override;
 };
 
 struct ImageBase : public Box
@@ -135,7 +171,7 @@ struct Image : public ImageBase
 
     void prepare( const void *data, int stride, int height );
 
-    virtual void draw( uint32_t *pixels, int width, int height, int x, int y ) const override;
+    virtual void draw( Canvas& canvas, int x, int y ) const override;
 };
 
 struct ImageBlend : public ImageBase
@@ -146,7 +182,7 @@ struct ImageBlend : public ImageBase
 
     void prepare( const void *data, int stride, int height );
 
-    virtual void draw( uint32_t *pixels, int width, int height, int x, int y ) const override;
+    virtual void draw( Canvas& canvas, int x, int y ) const override;
 };
 
 struct StaticText : public ImageBlend
@@ -173,7 +209,7 @@ struct DynamicText : public StaticText, public Active
 
     void prepare( bool write = true );
 
-    virtual void draw( uint32_t *pixels, int width, int height, int x, int y ) const override;
+    virtual void draw( Canvas& canvas, int x, int y ) const override;
 
     virtual bool hover( int x, int y ) override;
     virtual bool click( bool release, int x, int y ) override;
@@ -198,7 +234,7 @@ struct Combobox : public Box, public Active
     void open( bool f );
     size_t select( int x, int y );
 
-    virtual void draw( uint32_t *pixels, int width, int height, int x, int y ) const override;
+    virtual void draw( Canvas& canvas, int x, int y ) const override;
 
     virtual bool hover( int x, int y ) override;
     virtual bool click( bool release, int x, int y ) override;
@@ -225,7 +261,7 @@ struct ActiveTrigger : public Button
     ActiveTrigger( const ActiveTrigger& other );
     virtual ~ActiveTrigger();
 
-    virtual void draw( uint32_t *pixels, int width, int height, int x, int y ) const override;
+    virtual void draw( Canvas& canvas, int x, int y ) const override;
 };
 
 struct TextButton : public Button
@@ -237,7 +273,7 @@ struct TextButton : public Button
     bool centerX, centerY;
     std::wstring desc;
 
-    virtual void draw( uint32_t *pixels, int width, int height, int x, int y ) const override;
+    virtual void draw( Canvas& canvas, int x, int y ) const override;
 };
 
 struct MinimizeButton : public Button
@@ -246,7 +282,7 @@ struct MinimizeButton : public Button
     MinimizeButton( const MinimizeButton& other );
     virtual ~MinimizeButton();
 
-    virtual void draw( uint32_t *pixels, int width, int height, int x, int y ) const override;
+    virtual void draw( Canvas& canvas, int x, int y ) const override;
 };
 
 struct MaximizeButton : public Button
@@ -255,7 +291,7 @@ struct MaximizeButton : public Button
     MaximizeButton( const MaximizeButton& other );
     virtual ~MaximizeButton();
 
-    virtual void draw( uint32_t *pixels, int width, int height, int x, int y ) const override;
+    virtual void draw( Canvas& canvas, int x, int y ) const override;
 };
 
 struct CloseButton : virtual public Button
@@ -264,7 +300,7 @@ struct CloseButton : virtual public Button
     CloseButton( const CloseButton& other );
     virtual ~CloseButton();
 
-    virtual void draw( uint32_t *pixels, int width, int height, int x, int y ) const override;
+    virtual void draw( Canvas& canvas, int x, int y ) const override;
 };
 
 struct PlusButton : virtual public Button
@@ -278,7 +314,7 @@ struct PlusButton : virtual public Button
 
     void setDefaultCallback();
 
-    virtual void draw( uint32_t *pixels, int width, int height, int x, int y ) const override;
+    virtual void draw( Canvas& canvas, int x, int y ) const override;
 };
 
 struct DropArea : virtual public Button
@@ -287,7 +323,36 @@ struct DropArea : virtual public Button
     DropArea( const DropArea& other );
     virtual ~DropArea();
 
-    virtual void draw( uint32_t *pixels, int width, int height, int x, int y ) const override;
+    virtual void draw( Canvas& canvas, int x, int y ) const override;
+};
+
+struct Scroller : public Box, public Active
+{
+    struct State
+    {
+        int tw = 0, th = 0, cw = 0, ch = 0, sw = 0, sh = 0, sizeh = 0, sizev = 0, posh = 0, posv = 0, xside = 0, yside = 0;
+        bool hscroll = false, vscroll = false, ok = false;
+    };
+
+    Scroller();
+    Scroller( const Scroller& other );
+
+    std::optional<int> holdx, holdy;
+    float horizontal, vertical;
+    Object *content;
+    int size;
+    State s;
+
+    void calculate();
+    void scroll( int& x, int& y ) const;
+
+    virtual bool contains( int x, int y ) const override;
+
+    virtual bool hover( int x, int y ) override;
+    virtual bool click( bool release, int x, int y ) override;
+    virtual bool input( wchar_t c ) override;
+
+    virtual void draw( Canvas& canvas, int x, int y ) const override;
 };
 
 struct Node : virtual public ActiveGroup
@@ -357,14 +422,6 @@ struct Node : virtual public ActiveGroup
     std::shared_ptr<Node> detach();
 };
 
-struct Scroller : public Box, public Active
-{
-    Scroller();
-    Scroller( const Scroller& other ) = delete;
-
-    Object *content;
-};
-
 class Keys
 {
 private:
@@ -385,8 +442,10 @@ class InputData
 {
 public:
     ChangedValue<bool> up, down, left, right, escape, del, shift, ctrl, space, enter, leftMouse, rightMouse, middleMouse, f1;
-    ChangedValue<int> mouseX{ -1 }, mouseY{ -1 };
-    bool init = false;
+    ChangedValue<int> mouseX{-1}, mouseY{-1};
+    bool init = false, scale = false;
+    int width = 0, height = 0;
+    wchar_t typed = L'\0';
     Keys keys;
 };
 
@@ -405,6 +464,7 @@ struct Window : virtual public ActiveGroup
     Trigger self, topTrigger, bottomTrigger, leftTrigger, rightTrigger, mouseTrigger;
     Rectangle titleBar, leftBorder, rightBorder, topBorder, bottomBorder, client;
     Image icon, content;
+    Scroller scroller;
     StaticText title;
 
     MinimizeButton minimizeButton;
@@ -574,5 +634,5 @@ struct Hierarchy : public GraphicInterface::Window
     virtual void update() override;
 };
 
-void savePath( std::function<void( const std::optional<std::filesystem::path>& )> callback, std::filesystem::path path = L"C:\\Users\\User\\Downloads" );
-void openPath( std::function<void( const std::optional<std::filesystem::path>& )> callback, std::filesystem::path path = L"C:\\Users\\User\\Downloads" );
+void savePath( std::function<void( const std::optional<std::filesystem::path>& )> callback, std::filesystem::path path = L"" );
+void openPath( std::function<void( const std::optional<std::filesystem::path>& )> callback, std::filesystem::path path = L"" );
