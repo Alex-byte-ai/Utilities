@@ -97,6 +97,8 @@ struct Active : virtual public Object
     virtual bool hover( int x, int y ) = 0;
     virtual bool click( bool release, int x, int y ) = 0;
     virtual bool input( wchar_t c ) = 0;
+
+    virtual void update() = 0;
 };
 
 struct ActiveGroup : public Group, public Active
@@ -108,6 +110,10 @@ struct ActiveGroup : public Group, public Active
     virtual bool hover( int x, int y ) override;
     virtual bool click( bool release, int x, int y ) override;
     virtual bool input( wchar_t c ) override;
+
+    using Active::update;
+
+    virtual void update() override;
 
     void add( Object *object );
     void remove( Object *object );
@@ -158,9 +164,8 @@ struct ImageBase : public Box
     virtual ~ImageBase();
 
     std::vector<uint32_t> pixels;
-    int bufferW, bufferH;
 
-    void prepare( int stride, int height );
+    void prepare( const void *input, int stride, int height );
 };
 
 struct Image : public ImageBase
@@ -169,6 +174,7 @@ struct Image : public ImageBase
     Image( const Image& other );
     virtual ~Image();
 
+    void prepare();
     void prepare( const void *data, int stride, int height );
 
     virtual void draw( Canvas& canvas, int x, int y ) const override;
@@ -180,6 +186,7 @@ struct ImageBlend : public ImageBase
     ImageBlend( const ImageBlend& other );
     virtual ~ImageBlend();
 
+    void prepare();
     void prepare( const void *data, int stride, int height );
 
     virtual void draw( Canvas& canvas, int x, int y ) const override;
@@ -191,10 +198,12 @@ struct StaticText : public ImageBlend
     StaticText( const StaticText& other );
     virtual ~StaticText();
 
+    int size;
     uint32_t color;
     std::wstring value;
 
     void prepare();
+    void prepare( const void *data, int stride, int height );
 };
 
 struct DynamicText : public StaticText, public Active
@@ -215,6 +224,7 @@ struct DynamicText : public StaticText, public Active
     virtual bool click( bool release, int x, int y ) override;
     virtual bool input( wchar_t c ) override;
 
+    virtual void update() override;
 private:
     bool focused = false;
     static DynamicText *focus;
@@ -239,6 +249,8 @@ struct Combobox : public Box, public Active
     virtual bool hover( int x, int y ) override;
     virtual bool click( bool release, int x, int y ) override;
     virtual bool input( wchar_t c ) override;
+
+    virtual void update() override;
 };
 
 struct Button : public Box, public Active
@@ -253,6 +265,8 @@ struct Button : public Box, public Active
     virtual bool hover( int x, int y ) override;
     virtual bool click( bool release, int x, int y ) override;
     virtual bool input( wchar_t c ) override;
+
+    virtual void update() override;
 };
 
 struct ActiveTrigger : public Button
@@ -330,7 +344,7 @@ struct Scroller : public Box, public Active
 {
     struct State
     {
-        int tw = 0, th = 0, cw = 0, ch = 0, sw = 0, sh = 0, sizeh = 0, sizev = 0, posh = 0, posv = 0, xside = 0, yside = 0;
+        int tw = 0, th = 0, aw = 0, ah = 0, cw = 0, ch = 0, sw = 0, sh = 0, sizeh = 0, sizev = 0, posh = 0, posv = 0, xside = 0, yside = 0;
         bool hscroll = false, vscroll = false, ok = false;
     };
 
@@ -340,10 +354,10 @@ struct Scroller : public Box, public Active
     std::optional<int> holdx, holdy;
     float horizontal, vertical;
     Object *content;
+    bool corner;
     int size;
     State s;
 
-    void calculate();
     void scroll( int& x, int& y ) const;
 
     virtual bool contains( int x, int y ) const override;
@@ -351,6 +365,8 @@ struct Scroller : public Box, public Active
     virtual bool hover( int x, int y ) override;
     virtual bool click( bool release, int x, int y ) override;
     virtual bool input( wchar_t c ) override;
+
+    virtual void update() override;
 
     virtual void draw( Canvas& canvas, int x, int y ) const override;
 };
@@ -395,6 +411,7 @@ struct Node : virtual public ActiveGroup
     Node( const Node& other ) = delete;
     virtual ~Node();
 
+    virtual void update() override;
     void update( const Parameter& parameter );
 
     ActionData &data;
@@ -491,11 +508,19 @@ public:
     OutputData( GraphicInterface::Window &desc );
 };
 
+extern uint32_t customColors[16];
+
+bool getColor( wchar_t code, uint32_t& color );
+wchar_t getCode( uint32_t color );
+std::wstring toPlainText( const std::wstring& colorfulText );
+
 uint32_t makeColor( uint8_t r, uint8_t g, uint8_t b, uint8_t a );
+
 uint8_t getR( uint32_t color );
 uint8_t getG( uint32_t color );
 uint8_t getB( uint32_t color );
 uint8_t getA( uint32_t color );
+
 bool noWindows();
 }
 

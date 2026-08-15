@@ -34,12 +34,16 @@ static std::optional<std::filesystem::path> formConsoleSavePath( Context &contex
     return {};
 }
 
-Context::Context( Console &console, Pause &p, const Information::Item &i )
-    : information( i ), pause( p ), out( console, formConsoleSavePath( *this ) )
-{}
+Context::Context( Console &console, Pause &p, const Information::Item &i ) : information( i ), pause( p ), out( console )
+{
+    saveDirectory = formConsoleSavePath( *this );
+}
 
 Context::~Context()
-{}
+{
+    if( saveDirectory )
+        out.save( *saveDirectory );
+}
 
 std::string Context::Identity() const
 {
@@ -111,7 +115,7 @@ void Context::Close()
     out << Closing();
 }
 
-ConsoleOutput &Context::output()
+Console &Context::output()
 {
     return out;
 }

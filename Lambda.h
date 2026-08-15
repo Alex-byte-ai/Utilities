@@ -53,19 +53,16 @@ public:
     class Item
     {
     public:
-        __attribute__( ( always_inline ) )
         Item( std::function<void()> v, Lock l )
             : value( std::move( v ) ), lock( std::move( l ) )
         {}
 
-        __attribute__( ( always_inline ) )
         void operator()( const Key &key ) const
         {
             if( !lock || lock == key )
                 value();
         }
 
-        __attribute__( ( always_inline ) )
         bool valid() const
         {
             return value != nullptr;
@@ -75,37 +72,31 @@ public:
         Lock lock;
     };
 
-    __attribute__( ( always_inline ) )
     Finalizer( Key k = {} ) : key( std::move( k ) )
     {}
 
-    __attribute__( ( always_inline ) )
     const T &operator()( Key k )
     {
         key = std::move( k );
         return *key;
     }
 
-    __attribute__( ( always_inline ) )
     void push( const Item &onDestroy )
     {
         if( onDestroy.valid() )
             toDoList.push( onDestroy );
     }
 
-    __attribute__( ( always_inline ) )
     void push( const std::function<void()> &value )
     {
         push( Item( value, {} ) );
     }
 
-    __attribute__( ( always_inline ) )
     void pop()
     {
         toDoList.pop();
     }
 
-    __attribute__( ( always_inline ) )
     ~Finalizer()
     {
         while( !toDoList.empty() )

@@ -4,6 +4,8 @@
 #include <optional>
 #include <string>
 
+#include "UnicodeString.h"
+#include "Exception.h"
 #include "Connect.h"
 
 class Console
@@ -12,15 +14,18 @@ public:
     class Data;
     class ServerInformation;
 private:
-    Data *data;
     ServerInformation *serverInfo;
+    Unicode::String buffer;
     Connect connect;
+    Data *data;
 public:
     struct Color
     {
-        float r, g, b;
-        Color() : r( 0 ), g( 0 ), b( 0 ) {};
-        Color( float red, float green, float blue ) : r( red ), g( green ), b( blue ) {};
+        float r, g, b, a;
+
+        Color();
+        Color( float red, float green, float blue, float alpha = 1.0f );
+        uint32_t get() const;
     };
 
     Console();
@@ -28,21 +33,38 @@ public:
 
     bool run();
 
-    void operator()( const std::wstring &msg );
+    void msg( const std::wstring &message );
 
-    // Entered lines will all be shifted after these procedures
+    // Entered text will be shifted after calling these:
     void operator++(); // Shift right
     void operator--(); // Shift left
 
     void color( const std::optional<Color> &c );
 
-    bool configure( const std::optional<std::filesystem::path> &configFile = {} );
+    void configure( const std::optional<std::filesystem::path> &configFile = {} );
     void save( const std::optional<std::filesystem::path> &path = {} );
-    bool command( const std::wstring &cmd );
+    void command( const std::wstring &cmd );
 
-    void flush();
     void clear();
 
     bool focused();
     bool running();
+
+    void numericBase( short int value );
+    short int numericBase();
+    void showBase( std::optional<short int> value );
+    std::optional<short int> showBase();
+
+    template<typename T>
+    inline Console &operator<<( const T &sample )
+    {
+        buffer.Clear();
+        buffer << sample;
+        std::wstring result;
+        makeException( buffer.EncodeW( result ) );
+        msg( result );
+        return *this;
+    }
+private:
+    void sysMsg( const std::wstring &message );
 };

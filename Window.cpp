@@ -4,8 +4,9 @@
 #include <dwmapi.h>
 
 #include <algorithm>
-#include <cwctype>
 #include <memory>
+#include <map>
+#include <set>
 
 #include "UnicodeString.h"
 #include "Exception.h"
@@ -82,6 +83,387 @@ private:
 
 namespace GraphicInterface
 {
+uint32_t customColors[16] = {};
+
+//Incorrect wchar_t values: 0xFDD0 - 0xFDEF, 0xFFFF (33 total)
+static std::map<wchar_t, uint32_t> colorEncodingData()
+{
+    std::map<wchar_t, uint32_t> v;
+    v.emplace( 0xFDD0, 0xff000000 ); //Black
+    v.emplace( 0xFDD1, 0xff0000AA ); //Blue
+    v.emplace( 0xFDD2, 0xff00AA00 ); //Green
+    v.emplace( 0xFDD3, 0xff00AAAA ); //Cyan
+    v.emplace( 0xFDD4, 0xffAA0000 ); //Red
+    v.emplace( 0xFDD5, 0xffAA00AA ); //Magenta
+    v.emplace( 0xFDD6, 0xffAA5500 ); //Brown
+    v.emplace( 0xFDD7, 0xffAAAAAA ); //Light Gray
+    v.emplace( 0xFDD8, 0xff555555 ); //Dark Gray
+    v.emplace( 0xFDD9, 0xff5555FF ); //Light Blue
+    v.emplace( 0xFDDA, 0xff55FF55 ); //Light Green
+    v.emplace( 0xFDDB, 0xff55FFFF ); //Light Cyan
+    v.emplace( 0xFDDC, 0xffFF5555 ); //Light Red
+    v.emplace( 0xFDDD, 0xffFF55FF ); //Light Magenta
+    v.emplace( 0xFDDE, 0xffFFFF55 ); //Yellow
+    v.emplace( 0xFDDF, 0xffFFFFFF ); //White
+    v.emplace( 0xFDE0, customColors[0] ); //User output
+    v.emplace( 0xFDE1, customColors[1] ); //Console output
+    v.emplace( 0xFDE2, customColors[2] );
+    v.emplace( 0xFDE3, customColors[3] );
+    v.emplace( 0xFDE4, customColors[4] );
+    v.emplace( 0xFDE5, customColors[5] );
+    v.emplace( 0xFDE6, customColors[6] );
+    v.emplace( 0xFDE7, customColors[7] );
+    v.emplace( 0xFDE8, customColors[8] );
+    v.emplace( 0xFDE9, customColors[9] );
+    v.emplace( 0xFDEA, customColors[10] );
+    v.emplace( 0xFDEB, customColors[11] );
+    v.emplace( 0xFDEC, customColors[12] );
+    v.emplace( 0xFDED, customColors[13] );
+    v.emplace( 0xFDEE, customColors[14] );
+    v.emplace( 0xFDEF, customColors[15] );
+    // v.emplace( 0xFFFF, 0 );
+    return v;
+}
+
+bool getColor( wchar_t code, uint32_t& color )
+{
+    auto data = colorEncodingData();
+    auto i = data.find( code );
+    if( i == data.end() )
+        return false;
+    color = i->second;
+    return true;
+}
+
+wchar_t getCode( uint32_t color )
+{
+    int red = getR( color );
+    int green = getG( color );
+    int blue = getB( color );
+
+    uint32_t distance = 200000;
+    wchar_t result = L'\0';
+
+    size_t i = 0;
+    for( auto& [code, c] : colorEncodingData() )
+    {
+        int r = getR( c );
+        int g = getG( c );
+        int b = getB( c );
+
+        uint32_t d = Sqr( red - r ) + Sqr( green - g ) + Sqr( blue - b );
+        if( d < distance )
+        {
+            distance = d;
+            result = code;
+        }
+        ++i;
+        if( i >= 16 )
+            break;
+    }
+
+    return result;
+}
+
+std::wstring toPlainText( const std::wstring& colorfulText )
+{
+    std::set<wchar_t> markers;
+    for( auto& [code, color] : colorEncodingData() )
+        markers.insert( code );
+
+    std::wstring result;
+    result.reserve( colorfulText.size() );
+    for( auto& c : colorfulText )
+    {
+        if( markers.find( c ) ==  markers.end() )
+            result += c;
+    }
+    return result;
+}
+
+uint32_t makeColor( uint8_t r, uint8_t g, uint8_t b, uint8_t a )
+{
+    return ( a << 24 ) | ( r << 16 ) | ( g << 8 ) | b;
+}
+
+uint8_t getR( uint32_t color )
+{
+    return ( color >> 16 ) & 0xff;
+}
+
+uint8_t getG( uint32_t color )
+{
+    return ( color >> 8 ) & 0xff;
+}
+
+uint8_t getB( uint32_t color )
+{
+    return color & 0xff;
+}
+
+uint8_t getA( uint32_t color )
+{
+    return ( color >> 24 ) & 0xff;
+}
+
+bool noWindows()
+{
+    return GenericWindow::count() == 0;
+}
+
+static bool renderTextToBuffer( const std::wstring& text, const std::wstring& fontName, uint32_t color, int lineHeight, int& outWidth, int& outHeight, std::vector<uint32_t>& outBuffer )
+{
+    if( lineHeight <= 0 )
+        return false;
+
+    Finalizer _;
+
+    std::vector<std::tuple<wchar_t, size_t>> coloring;
+    std::vector<std::wstring> lines;
+    size_t defaultColorCount = 0;
+    {
+        auto data = colorEncodingData();
+
+        bool proceed = true;
+        size_t pos = 0, start = 0;
+        do
+        {
+            // Searching for an ending of a line
+            pos = text.find( L'\n', start );
+            if( pos == std::wstring::npos )
+            {
+                pos = text.size();
+                proceed = false;
+            }
+
+            // Processing and adding a line, saving coloring data
+            auto& line = lines.emplace_back();
+            line.reserve( pos - start );
+
+            size_t count = 0;
+            for( ; start < pos; ++start )
+            {
+                auto symbol = text[start];
+                auto i = data.find( symbol );
+                if( i == data.end() )
+                {
+                    line += symbol;
+                    ++count;
+                }
+                else
+                {
+                    if( !coloring.empty() )
+                        std::get<1>( coloring.back() ) += count;
+                    else
+                        defaultColorCount += count;
+                    coloring.emplace_back( symbol, 0 );
+                    count = 0;
+                }
+            }
+
+            if( !coloring.empty() )
+                std::get<1>( coloring.back() ) += count;
+            else
+                defaultColorCount += count;
+
+            // Calculating beginning of a next line
+            start = pos + 1;
+        }
+        while( proceed );
+
+        if( lines.empty() )
+            lines.emplace_back( L"" );
+    }
+
+    HDC hdc = CreateCompatibleDC( nullptr );
+    if( !hdc )
+        return false;
+
+    _.push( [hdc]()
+    {
+        DeleteDC( hdc );
+    } );
+
+    LOGFONTW font;
+    clear( &font, sizeof( font ) );
+
+    font.lfHeight = lineHeight;
+    font.lfWeight = 400;
+    font.lfOutPrecision = OUT_RASTER_PRECIS;
+    font.lfQuality = ANTIALIASED_QUALITY;
+    font.lfPitchAndFamily = FF_SWISS | VARIABLE_PITCH;
+    copy( font.lfFaceName, fontName.c_str(), sizeof( wchar_t ) * Min( size_t( LF_FACESIZE ), fontName.length() ) );
+
+    HFONT hFont = CreateFontIndirectW( &font );
+    if( !hFont )
+        return false;
+
+    HGDIOBJ oldFont = SelectObject( hdc, hFont );
+    _.push( [hdc, hFont, oldFont]()
+    {
+        SelectObject( hdc, oldFont );
+        DeleteObject( hFont );
+    } );
+
+    if( SetTextCharacterExtra( hdc, 0 ) == ( int )GDI_ERROR )
+        return false;
+
+    SIZE sz = {};
+    if( !GetTextExtentPoint32W( hdc, L"Z", 1, &sz ) )
+        return false;
+    int charWidth = sz.cx;
+
+    int maxLineWidth = 0;
+    size_t maxLineLength = 0;
+    for( auto &line : lines )
+    {
+        if( !GetTextExtentPoint32W( hdc, line.c_str(), line.size(), &sz ) )
+            return false;
+        if( sz.cx > maxLineWidth )
+            maxLineWidth = sz.cx;
+        if( line.size() > maxLineLength )
+            maxLineLength = line.size();
+    }
+
+    int finalWidth = maxLineWidth;
+    int finalHeight = lineHeight * lines.size();
+    if( finalWidth <= 0 || finalHeight <= 0 )
+        return false;
+
+    BITMAPINFO bmi;
+    clear( &bmi, sizeof( bmi ) );
+    bmi.bmiHeader.biSize = sizeof( BITMAPINFOHEADER );
+    bmi.bmiHeader.biWidth = finalWidth;
+    bmi.bmiHeader.biHeight = -finalHeight;
+    bmi.bmiHeader.biPlanes = 1;
+    bmi.bmiHeader.biBitCount = 32;
+    bmi.bmiHeader.biCompression = BI_RGB;
+
+    void* bits = nullptr;
+    HBITMAP hBitmap = CreateDIBSection( nullptr, &bmi, DIB_RGB_COLORS, &bits, nullptr, 0 );
+    _.push( [hBitmap]()
+    {
+        if( hBitmap )
+            DeleteObject( hBitmap );
+    } );
+    if( !hBitmap || !bits )
+        return false;
+
+    HDC memDC = CreateCompatibleDC( nullptr );
+    if( !memDC )
+        return false;
+
+    HGDIOBJ oldBmp = SelectObject( memDC, hBitmap );
+    HGDIOBJ oldMemFont = SelectObject( memDC, hFont );
+    _.push( [memDC, oldMemFont, oldBmp]()
+    {
+        SelectObject( memDC, oldMemFont );
+        SelectObject( memDC, oldBmp );
+        DeleteDC( memDC );
+    } );
+
+    // Black background
+    size_t pixelCount = finalWidth * finalHeight;
+    clear( bits, pixelCount * sizeof( uint32_t ) );
+
+    // White text
+    SetBkMode( memDC, TRANSPARENT );
+    SetTextColor( memDC, RGB( 255, 255, 255 ) );
+
+    int offset = 0;
+    for( auto &line : lines )
+    {
+        TextOutW( memDC, 0, offset, line.c_str(), line.size() );
+        offset += lineHeight;
+    }
+
+    std::vector<uint32_t> colorMatrix( maxLineLength * lines.size(), 0 );
+    {
+        size_t count = defaultColorCount, lineSize = lines[0].size(), patchIndex = 0;
+        int x = 0, y = 0;
+
+        auto full = [&]()
+        {
+            return y * maxLineLength + x >= colorMatrix.size();
+        };
+
+        auto get = [&]()
+        {
+            if( patchIndex >= coloring.size() )
+                return false;
+            auto& [a, b] = coloring[patchIndex++];
+            getColor( a, color );
+            count = b;
+            return true;
+        };
+
+        auto apply = [&]()
+        {
+            color = makeColor( getR( color ), getG( color ), getB( color ), 0 );
+
+            if( count <= lineSize )
+            {
+                lineSize -= count;
+                while( count > 0 )
+                {
+                    colorMatrix[y * maxLineLength + x] = color;
+                    ++x;
+                    --count;
+                }
+                return;
+            }
+
+            count -= lineSize;
+            while( lineSize > 0 )
+            {
+                colorMatrix[y * maxLineLength + x] = color;
+                ++x;
+                --lineSize;
+            }
+            if( ( size_t )( y + 1 ) >= lines.size() )
+                return;
+
+            x = 0;
+            ++y;
+            lineSize = lines[y].size();
+        };
+
+        do
+        {
+            apply();
+        }
+        while( !full() && get() );
+    }
+
+    outWidth = finalWidth;
+    outHeight = finalHeight;
+    outBuffer.resize( pixelCount );
+
+    auto bytes = ( uint8_t* )bits;
+    for( int y = 0; y < finalHeight; ++y )
+    {
+        for( int x = 0; x < finalWidth; ++x )
+        {
+            size_t index = y * finalWidth + x;
+            uint8_t b = bytes[index * 4 + 0];
+            uint8_t g = bytes[index * 4 + 1];
+            uint8_t r = bytes[index * 4 + 2];
+
+            int i = y / lineHeight;
+            int j = x / charWidth;
+            if( ( size_t )j < maxLineLength && ( size_t )i < lines.size() )
+                color = colorMatrix[i * maxLineLength + j];
+            else
+                color = 0;
+
+            // Derive alpha from luminance
+            auto alpha = ( 77 * r + 150 * g + 29 * b ) >> 8;
+            outBuffer[index] = ( alpha << 24 ) | color;
+        }
+    }
+
+    return true;
+}
 
 ConstCanvas::ConstCanvas() : pixels( nullptr ), width( 0 ), height( 0 ), stride( 0 )
 {}
@@ -366,169 +748,6 @@ Canvas Canvas::trim( int& x0, int& y0, int w, int h, bool change )
     return result;
 }
 
-static bool renderTextToBuffer(
-    const std::wstring& text, const std::wstring& fontName, uint32_t color, int padding,
-    int& outWidth, int& outHeight, std::vector<uint32_t>& outBuffer )
-{
-    std::vector<std::wstring> lines;
-    {
-        size_t pos = 0, start = 0;
-        while( pos != std::wstring::npos )
-        {
-            pos = text.find( L'\n', start );
-            if( pos == std::wstring::npos )
-            {
-                lines.push_back( text.substr( start ) );
-                break;
-            }
-            lines.push_back( text.substr( start, pos - start ) );
-            start = pos + 1;
-        }
-
-        if( lines.empty() )
-            lines.push_back( L"" );
-    }
-
-    HDC hdc = CreateCompatibleDC( nullptr );
-    if( !hdc )
-        return false;
-
-    LOGFONTW font;
-    clear( &font, sizeof( font ) );
-
-    font.lfHeight = 16;
-    font.lfWeight = 400;
-    font.lfOutPrecision = OUT_RASTER_PRECIS;
-    font.lfQuality = ANTIALIASED_QUALITY;
-    font.lfPitchAndFamily = FF_SWISS | VARIABLE_PITCH;
-    copy( font.lfFaceName, fontName.c_str(), sizeof( wchar_t ) * Min( size_t( LF_FACESIZE ), fontName.length() ) );
-
-    HFONT hFont = CreateFontIndirectW( &font );
-
-    if( !hFont )
-    {
-        DeleteDC( hdc );
-        return false;
-    }
-
-    HGDIOBJ oldFont = SelectObject( hdc, hFont );
-
-    TEXTMETRICW tm;
-    if( !GetTextMetricsW( hdc, &tm ) )
-    {
-        SelectObject( hdc, oldFont );
-        DeleteObject( hFont );
-        DeleteDC( hdc );
-        return false;
-    }
-
-    int maxWidth = 0;
-    SIZE sz;
-    for( auto &ln : lines )
-    {
-        if( !GetTextExtentPoint32W( hdc, ln.c_str(), ln.size(), &sz ) )
-            sz.cx = 0;
-        if( sz.cx > maxWidth )
-            maxWidth = sz.cx;
-    }
-
-    int lineHeight = tm.tmHeight;
-    int totalHeight = lineHeight * lines.size();
-    int finalWidth = maxWidth + padding * 2;
-    int finalHeight = totalHeight + padding * 2;
-
-    if( finalWidth <= 0 || finalHeight <= 0 )
-    {
-        SelectObject( hdc, oldFont );
-        DeleteObject( hFont );
-        DeleteDC( hdc );
-        return false;
-    }
-
-    BITMAPINFO bmi;
-    ZeroMemory( &bmi, sizeof( bmi ) );
-    bmi.bmiHeader.biSize = sizeof( BITMAPINFOHEADER );
-    bmi.bmiHeader.biWidth = finalWidth;
-    bmi.bmiHeader.biHeight = -finalHeight;
-    bmi.bmiHeader.biPlanes = 1;
-    bmi.bmiHeader.biBitCount = 32;
-    bmi.bmiHeader.biCompression = BI_RGB;
-
-    void* bits = nullptr;
-    HBITMAP hBitmap = CreateDIBSection( nullptr, &bmi, DIB_RGB_COLORS, &bits, nullptr, 0 );
-    if( !hBitmap || !bits )
-    {
-        SelectObject( hdc, oldFont );
-        DeleteObject( hFont );
-        DeleteDC( hdc );
-        if( hBitmap )
-            DeleteObject( hBitmap );
-        return false;
-    }
-
-    HDC memDC = CreateCompatibleDC( nullptr );
-    if( !memDC )
-    {
-        DeleteObject( hBitmap );
-        SelectObject( hdc, oldFont );
-        DeleteObject( hFont );
-        DeleteDC( hdc );
-        return false;
-    }
-
-    HGDIOBJ oldBmp = SelectObject( memDC, hBitmap );
-    HGDIOBJ oldMemFont = SelectObject( memDC, hFont );
-
-    // White background so we can derive alpha later
-    uint32_t *pix = ( uint32_t * )bits;
-    size_t pixelCount = finalWidth * finalHeight;
-    for( size_t i = 0; i < pixelCount; ++i )
-        pix[i] = 0x00FFFFFFu;
-
-    SetBkMode( memDC, TRANSPARENT );
-    SetTextColor( memDC, RGB( 0, 0, 0 ) );
-
-    int y = padding;
-    for( auto &ln : lines )
-    {
-        TextOutW( memDC, padding, y, ln.c_str(), ln.size() );
-        y += lineHeight;
-    }
-
-    outBuffer.resize( pixelCount );
-    auto bytes = ( uint8_t* )bits;
-    for( int yy = 0; yy < finalHeight; ++yy )
-    {
-        for( int xx = 0; xx < finalWidth; ++xx )
-        {
-            size_t idx = yy * finalWidth + xx;
-            uint8_t b = bytes[idx * 4 + 0];
-            uint8_t g = bytes[idx * 4 + 1];
-            uint8_t r = bytes[idx * 4 + 2];
-
-            // Derive alpha from luminance (white background, black text)
-            int lum = ( 77 * r + 150 * g + 29 * b ) >> 8;
-            uint32_t a = 255 - lum;
-
-            outBuffer[idx] = makeColor( getR( color ), getG( color ), getB( color ), a );
-        }
-    }
-    // copy( outBuffer.data(), bits, pixelCount * 4 );
-
-    outWidth = finalWidth;
-    outHeight = finalHeight;
-
-    SelectObject( memDC, oldMemFont );
-    SelectObject( memDC, oldBmp );
-    SelectObject( hdc, oldFont );
-    DeleteObject( hFont );
-    DeleteObject( hBitmap );
-    DeleteDC( memDC );
-    DeleteDC( hdc );
-
-    return true;
-}
-
 Object::Object() : visible( true ), x( 0 ), y( 0 )
 {}
 
@@ -717,6 +936,12 @@ bool ActiveGroup::input( wchar_t c )
     return false;
 }
 
+void ActiveGroup::update()
+{
+    for( auto active : interactive )
+        active->update();
+}
+
 void ActiveGroup::add( Object *object )
 {
     Group::add( object );
@@ -802,21 +1027,32 @@ void Rectangle::draw( Canvas& canvas, int dx, int dy ) const
     canvas.trim( dx, dy, w, h ).fill( color );
 }
 
-ImageBase::ImageBase() : Box(), bufferW( 0 ), bufferH( 0 )
+ImageBase::ImageBase() : Box()
 {}
 
-ImageBase::ImageBase( const ImageBase& other ) : Object( other ), Box( other ), pixels( other.pixels ), bufferW( other.bufferW ), bufferH( other.bufferH )
+ImageBase::ImageBase( const ImageBase& other ) : Object( other ), Box( other ), pixels( other.pixels )
 {}
 
 ImageBase::~ImageBase()
 {}
 
-void ImageBase::prepare( int stride, int height )
+void ImageBase::prepare( const void *data, int stride, int height )
 {
-    bufferW = w = Abs( stride );
-    bufferH = h = height;
-
+    w = Abs( stride );
+    h = height;
     pixels.resize( w * h );
+
+    auto line = w * sizeof( pixels[0] );
+    auto output = pixels.data();
+    auto input = ( const uint32_t* )data;
+
+    while( height > 0 )
+    {
+        copy( output, input, line );
+        output += w;
+        input += stride;
+        --height;
+    }
 }
 
 Image::Image() : ImageBase()
@@ -828,30 +1064,26 @@ Image::Image( const Image& other ) : Object( other ), ImageBase( other )
 Image::~Image()
 {}
 
+void Image::prepare()
+{
+    for( auto& pixel : pixels )
+    {
+        auto& o = *( RGBQUAD * )&pixel;
+
+        o.rgbBlue = o.rgbBlue * o.rgbReserved / 255;
+        o.rgbGreen = o.rgbGreen * o.rgbReserved / 255;
+        o.rgbRed = o.rgbRed * o.rgbReserved / 255;
+
+        // It seems, fully transparent parts of window can't be interacted with, and there is no way to disable that
+        if( o.rgbReserved <= 0 )
+            o.rgbReserved = 1;
+    }
+}
+
 void Image::prepare( const void *data, int stride, int height )
 {
-    ImageBase::prepare( stride, height );
-
-    auto output = ( RGBQUAD * )pixels.data();
-    auto input = ( const RGBQUAD * )data;
-
-    while( height > 0 )
-    {
-        for( int j = 0; j < w; ++j )
-        {
-            auto &o = *( output + j );
-            auto &i = *( input + j );
-            o.rgbBlue = i.rgbBlue * i.rgbReserved / 255;
-            o.rgbGreen = i.rgbGreen * i.rgbReserved / 255;
-            o.rgbRed = i.rgbRed * i.rgbReserved / 255;
-
-            // It seems, fully transparent parts of window can't be interacted with, and there is no way to disable that
-            o.rgbReserved = i.rgbReserved <= 0 ? 1 : i.rgbReserved;
-        }
-        output += bufferW;
-        input += stride;
-        --height;
-    }
+    ImageBase::prepare( data, stride, height );
+    prepare();
 }
 
 void Image::draw( Canvas& canvas, int dx, int dy ) const
@@ -861,8 +1093,8 @@ void Image::draw( Canvas& canvas, int dx, int dy ) const
 
     outer( dx, dy );
 
-    ConstCanvas self( pixels.data(), bufferW, bufferH, bufferW );
-    canvas.trim( dx, dy, bufferW, bufferH, true ).draw( self, dx, dy );
+    ConstCanvas self( pixels.data(), w, h, w );
+    canvas.trim( dx, dy, w, h, true ).draw( self, dx, dy );
 }
 
 ImageBlend::ImageBlend() : ImageBase()
@@ -874,28 +1106,21 @@ ImageBlend::ImageBlend( const ImageBlend& other ) : Object( other ), ImageBase( 
 ImageBlend::~ImageBlend()
 {}
 
+void ImageBlend::prepare()
+{
+    for( auto& pixel : pixels )
+    {
+        auto& o = *( RGBQUAD * )&pixel;
+        o.rgbBlue = o.rgbBlue * o.rgbReserved / 255;
+        o.rgbGreen = o.rgbGreen * o.rgbReserved / 255;
+        o.rgbRed = o.rgbRed * o.rgbReserved / 255;
+    }
+}
+
 void ImageBlend::prepare( const void *data, int stride, int height )
 {
-    ImageBase::prepare( stride, height );
-
-    auto output = ( RGBQUAD * )pixels.data();
-    auto input = ( const RGBQUAD * )data;
-
-    while( height > 0 )
-    {
-        for( int j = 0; j < w; ++j )
-        {
-            auto &o = *( output + j );
-            auto &i = *( input + j );
-            o.rgbBlue = i.rgbBlue * i.rgbReserved / 255;
-            o.rgbGreen = i.rgbGreen * i.rgbReserved / 255;
-            o.rgbRed = i.rgbRed * i.rgbReserved / 255;
-            o.rgbReserved = i.rgbReserved;
-        }
-        output += bufferW;
-        input += stride;
-        --height;
-    }
+    ImageBase::prepare( data, stride, height );
+    prepare();
 }
 
 void ImageBlend::draw( Canvas& canvas, int dx, int dy ) const
@@ -905,16 +1130,17 @@ void ImageBlend::draw( Canvas& canvas, int dx, int dy ) const
 
     outer( dx, dy );
 
-    ConstCanvas self( pixels.data(), bufferW, bufferH, bufferW );
-    canvas.trim( dx, dy, bufferW, bufferH, true ).drawBlend( self, dx, dy );
+    ConstCanvas self( pixels.data(), w, h, w );
+    canvas.trim( dx, dy, w, h, true ).drawBlend( self, dx, dy );
 }
 
 StaticText::StaticText() : ImageBlend()
 {
     color = makeColor( 0, 0, 0, 255 );
+    size = 16;
 }
 
-StaticText::StaticText( const StaticText& other ) : Object( other ), ImageBlend( other ), color( other.color ), value( other.value )
+StaticText::StaticText( const StaticText& other ) : Object( other ), ImageBlend( other ), size( other.size ), color( other.color ), value( other.value )
 {}
 
 StaticText::~StaticText()
@@ -922,16 +1148,13 @@ StaticText::~StaticText()
 
 void StaticText::prepare()
 {
-    std::vector<uint32_t> outBuffer;
-    int outWidth, outHeight;
-
-    if( renderTextToBuffer( value, L"DejaVuSansMono", color, 0, outWidth, outHeight, outBuffer ) )
+    if( renderTextToBuffer( value, L"DejaVuSansMono", color, size, w, h, pixels ) )
     {
-        ImageBlend::prepare( ( const void* )outBuffer.data(), outWidth, outHeight );
+        ImageBlend::prepare();
     }
     else
     {
-        bufferW = bufferH = 0;
+        w = h = 0;
         pixels.clear();
     }
 }
@@ -1010,6 +1233,9 @@ bool DynamicText::input( wchar_t c )
     prepare();
     return true;
 }
+
+void DynamicText::update()
+{}
 
 Combobox::Combobox() : Box(), Active(), option( 0 ), isOpen( false )
 {}
@@ -1101,6 +1327,9 @@ bool Combobox::input( wchar_t )
     return false;
 }
 
+void Combobox::update()
+{}
+
 Button::Button() : Box(), Active(), wasHovered( false ), off( false )
 {}
 
@@ -1133,6 +1362,9 @@ bool Button::input( wchar_t )
 {
     return false;
 }
+
+void Button::update()
+{}
 
 ActiveTrigger::ActiveTrigger() : Button()
 {}
@@ -1343,57 +1575,11 @@ void DropArea::draw( Canvas& canvas, int dx, int dy ) const
     }
 }
 
-Scroller::Scroller() : horizontal( 0.3f ), vertical( 0.3f ), content( nullptr ), size( 8 )
+Scroller::Scroller() : horizontal( 0.3f ), vertical( 0.3f ), content( nullptr ), corner( false ), size( 8 )
 {}
 
 Scroller::Scroller( const Scroller& other ) : Object( other ), Box( other ), Active( other ), horizontal( other.horizontal ), vertical( other.vertical ), content( other.content ), size( other.size )
 {}
-
-void Scroller::calculate()
-{
-    s.tw = content->width();
-    s.th = content->height();
-
-    s.ok = true;
-    if( s.tw < size || s.th < size )
-    {
-        s.ok = false;
-        return;
-    }
-
-    s.xside = w - size;
-    s.yside = h - size;
-
-    s.cw = s.tw;
-    s.ch = s.th;
-
-    s.sw = w - s.cw;
-    s.hscroll = s.sw < 0;
-
-    s.sh = h - s.ch - ( s.hscroll ? size : 0 );
-    s.vscroll = s.sh < 0;
-
-    if( s.vscroll )
-    {
-        s.sw -= size;
-        s.hscroll = s.sw < 0;
-    }
-
-    s.sw = s.hscroll ? 0 : s.sw;
-    s.sh = s.vscroll ? 0 : s.sh;
-
-    s.cw = w - s.sw - ( s.vscroll ? size : 0 );
-    s.ch = h - s.sh - ( s.hscroll ? size : 0 );
-
-    s.sw /= 2;
-    s.sh /= 2;
-
-    s.sizeh =  RoundDown( s.cw * s.cw / float( s.tw ) );
-    s.posh = s.hscroll ? RoundDown( horizontal * ( s.cw - s.sizeh ) ) : 0;
-
-    s.sizev =  RoundDown( s.ch * s.ch / float( s.th ) );
-    s.posv = s.vscroll ? RoundDown( vertical * ( s.ch - s.sizev ) ) : 0;
-}
 
 void Scroller::scroll( int& dx, int& dy ) const
 {
@@ -1481,6 +1667,65 @@ bool Scroller::click( bool release, int x0, int y0 )
 bool Scroller::input( wchar_t )
 {
     return false;
+}
+
+void Scroller::update()
+{
+    s.tw = content->width();
+    s.th = content->height();
+
+    s.aw = w;
+    s.ah = h;
+
+    s.ok = true;
+    if( s.tw < size || s.th < size )
+    {
+        s.ok = false;
+        return;
+    }
+
+    s.xside = w - size;
+    s.yside = h - size;
+
+    s.cw = s.tw;
+    s.ch = s.th;
+
+    s.sw = w - s.cw;
+    s.hscroll = s.sw < 0;
+
+    s.sh = h - s.ch - ( s.hscroll ? size : 0 );
+    s.vscroll = s.sh < 0;
+
+    if( s.vscroll )
+    {
+        s.sw -= size;
+        s.hscroll = s.sw < 0;
+    }
+
+    s.sw = s.hscroll ? 0 : s.sw;
+    s.sh = s.vscroll ? 0 : s.sh;
+
+    s.aw -= s.vscroll ? size : 0;
+    s.ah -= s.hscroll ? size : 0;
+
+    s.cw = s.aw - s.sw;
+    s.ch = s.ah - s.sh;
+
+    if( corner )
+    {
+        s.sw = s.sh = 0;
+    }
+    else
+    {
+        s.sw /= 2;
+        s.sh /= 2;
+    }
+
+    s.sizeh = RoundDown( s.cw * s.cw / float( s.tw ) );
+    s.posh = s.hscroll ? RoundDown( horizontal * ( s.cw - s.sizeh ) ) : 0;
+
+    s.sizev = RoundDown( s.ch * s.ch / float( s.th ) );
+    s.posv = s.vscroll ? RoundDown( vertical * ( s.ch - s.sizev ) ) : 0;
 }
 
 void Scroller::draw( Canvas& canvas, int dx, int dy ) const
@@ -1590,6 +1835,11 @@ Node::Node( ActionData &d, const Parameter& parameter, Node *r ) : Node( d, r, p
 
 Node::~Node()
 {}
+
+void Node::update()
+{
+    ActiveGroup::update();
+}
 
 void Node::update( const Parameter& parameter )
 {
@@ -1783,6 +2033,7 @@ Window::Window( int th, int sz, int bh, int tgw, int b )
 
     titleBar.color = makeColor( 255, 255, 255, 255 );
     leftBorder.color = rightBorder.color = topBorder.color = bottomBorder.color = makeColor( 85, 85, 85, 255 );
+    client.color = makeColor( 170, 170, 170, 255 );
 
     scroller.content = &content;
     add( &self );
@@ -1921,58 +2172,27 @@ void Window::update()
     title.x = icon.x + icon.w + buttonSpacingV;
     title.y = closeButton.y;
 
-    title.w = self.w - borderWidth - 2 * buttonSpacingV - 3 * buttonSize - 2 * buttonSpacingH - title.x;
-    if( title.w < title.bufferW )
-        title.w = 0;
+    int space = self.w - borderWidth - 2 * buttonSpacingV - 3 * buttonSize - 2 * buttonSpacingH - title.x;
+    title.visible = space >= title.w;
 
     client.x = self.x + borderWidth;
     client.y = self.y + borderWidth + titlebarHeight;
     client.w = self.w - 2 * borderWidth;
     client.h = self.h - titlebarHeight - 2 * borderWidth;
-    client.color = content.bufferW > 0 && content.bufferH > 0 ? makeColor( 60, 70, 200, 255 ) : makeColor( 170, 170, 170, 255 );
 
     scroller.place( client );
-    scroller.calculate();
 
     mouseTrigger.x = scroller.x + scroller.s.sw;
     mouseTrigger.y = scroller.y + scroller.s.sh;
     mouseTrigger.w = scroller.s.cw;
     mouseTrigger.h = scroller.s.ch;
+
+    ActiveGroup::update();
 }
 
 bool Window::run( bool lock )
 {
     return GenericWindow::create( *this, lock );
-}
-
-uint32_t makeColor( uint8_t r, uint8_t g, uint8_t b, uint8_t a )
-{
-    return ( a << 24 ) | ( r << 16 ) | ( g << 8 ) | b;
-}
-
-uint8_t getR( uint32_t color )
-{
-    return ( color >> 16 ) & 0xff;
-}
-
-uint8_t getG( uint32_t color )
-{
-    return ( color >> 8 ) & 0xff;
-}
-
-uint8_t getB( uint32_t color )
-{
-    return color & 0xff;
-}
-
-uint8_t getA( uint32_t color )
-{
-    return ( color >> 24 ) & 0xff;
-}
-
-bool noWindows()
-{
-    return GenericWindow::count() == 0;
 }
 }
 
@@ -3406,14 +3626,21 @@ bool GenericWindow::create( GraphicInterface::Window &desc, bool lock )
     killFocus();
     active = &window;
 
-    input.init = true;
     input.width = desc.client.w;
     input.height = desc.client.h;
-    window.handle();
-    input.init = false;
+
+    auto processInit = [&]()
+    {
+        input.init = true;
+        window.handle();
+        input.init = false;
+    };
 
     if( hndwnd )
+    {
+        processInit();
         return false;
+    }
 
     WNDCLASSEXW wc;
     std::wstring className = L"GenericWindowImplementationWinAPI", proxyTab = L"ProxyTab";
@@ -3445,6 +3672,8 @@ bool GenericWindow::create( GraphicInterface::Window &desc, bool lock )
     makeException( hndwnd );
 
     window.createTab();
+
+    processInit();
 
     update();
 
@@ -3525,7 +3754,7 @@ bool GenericWindow::handle()
     auto &img = outputData.image;
     if( img.changed() )
     {
-        GenericWindow::update();
+        update();
         img.reset();
     }
 
