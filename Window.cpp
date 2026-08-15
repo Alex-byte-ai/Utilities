@@ -1161,10 +1161,10 @@ void StaticText::prepare()
 
 DynamicText *DynamicText::focus = nullptr;
 
-DynamicText::DynamicText() : StaticText(), Active()
+DynamicText::DynamicText() : Box(), Active()
 {}
 
-DynamicText::DynamicText( const DynamicText& other ) : Object( other ), StaticText( other ), Active( other ), valid( other.valid ), setCallback( other.setCallback ), focused( other.focused )
+DynamicText::DynamicText( const DynamicText& other ) : Object( other ), Box( other ), Active( other ), valid( other.valid ), setCallback( other.setCallback ), focused( other.focused )
 {}
 
 DynamicText::~DynamicText()
@@ -1173,11 +1173,22 @@ DynamicText::~DynamicText()
         focus = nullptr;
 }
 
+const std::wstring& DynamicText::text() const
+{
+    return content.value;
+}
+
+void DynamicText::text( std::wstring value )
+{
+    content.value = std::move( value );
+    prepare();
+}
+
 void DynamicText::prepare( bool write )
 {
     if( write )
-        valid = setCallback ? setCallback( value ) : true;
-    StaticText::prepare();
+        valid = setCallback ? setCallback( content.value ) : true;
+    content.prepare();
 }
 
 void DynamicText::draw( Canvas& canvas, int dx, int dy ) const
@@ -1190,11 +1201,11 @@ void DynamicText::draw( Canvas& canvas, int dx, int dy ) const
     auto focusColor = makeColor( 255, 255, 127, 255 );
     auto background = valid ? ( focused ? focusColor : idleColor ) : errorColor;
 
-    int x1 = dx, y1 = dy;
     outer( dx, dy );
 
-    canvas.trim( dx, dy, w, h ).fill( background );
-    StaticText::draw( canvas, x1, y1 );
+    auto field = canvas.trim( dx, dy, w, h, true );
+    field.fill( background );
+    content.draw( field, dx, dy );
 }
 
 bool DynamicText::hover( int, int )
@@ -1223,12 +1234,12 @@ bool DynamicText::input( wchar_t c )
 
     if( c == L'\b' )
     {
-        if( !value.empty() )
-            value.pop_back();
+        if( !content.value.empty() )
+            content.value.pop_back();
     }
     else
     {
-        value += c;
+        content.value += c;
     }
     prepare();
     return true;
@@ -2269,7 +2280,7 @@ Settings::Settings( std::wstring tl, const Parameters& parameters )
         object->h = height;
 
         object->setCallback = value.set;
-        object->value = value.get();
+        object->text( value.get() );
         object->prepare();
     };
 
@@ -2620,16 +2631,16 @@ FileManager::FileManager( std::filesystem::path initial, bool write )
             if( !release )
                 return false;
 
-            if( std::filesystem::exists( file.value ) )
+            if( std::filesystem::exists( file.text() ) )
             {
-                if( std::filesystem::is_regular_file( file.value ) )
+                if( std::filesystem::is_regular_file( file.text() ) )
                 {
                     auto& question = popup.emplace( Popup::Type::Question, confirm.desc + L" file", L"File already exists, do you want to overwrite it?" );
                     question.onClose = [this, &question]()
                     {
                         if( question.answer && *question.answer )
                         {
-                            choice = file.value;
+                            choice = file.text();
                             closeButton.onClick( true );
                         }
                     };
@@ -2642,7 +2653,7 @@ FileManager::FileManager( std::filesystem::path initial, bool write )
             }
             else
             {
-                choice = file.value;
+                choice = file.text();
                 closeButton.onClick( true );
             }
             return true;
@@ -2655,7 +2666,7 @@ FileManager::FileManager( std::filesystem::path initial, bool write )
             if( !release )
                 return false;
 
-            std::filesystem::path candidate = file.value;
+            std::filesystem::path candidate = file.text();
             if( std::filesystem::exists( candidate ) && std::filesystem::is_regular_file( candidate ) )
             {
                 choice = candidate;
@@ -2681,8 +2692,7 @@ FileManager::FileManager( std::filesystem::path initial, bool write )
     root = std::move( initial );
 
     add( &file );
-    file.value = root->wstring();
-    file.prepare();
+    file.text( root->wstring() );
 
     select();
 }
@@ -2718,8 +2728,7 @@ void FileManager::select()
                     return false;
 
                 root = p;
-                file.value = p.wstring();
-                file.prepare();
+                file.text( p.wstring() );
                 return true;
             };
         }
@@ -2730,8 +2739,7 @@ void FileManager::select()
                 if( !release )
                     return false;
 
-                file.value = p.wstring();
-                file.prepare( true );
+                file.text( p.wstring() );
                 return true;
             };
         }

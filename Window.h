@@ -206,7 +206,7 @@ struct StaticText : public ImageBlend
     void prepare( const void *data, int stride, int height );
 };
 
-struct DynamicText : public StaticText, public Active
+struct DynamicText : public Box, public Active
 {
     DynamicText();
     DynamicText( const DynamicText& other );
@@ -215,6 +215,9 @@ struct DynamicText : public StaticText, public Active
     bool valid = true;
 
     std::function<bool( std::wstring )> setCallback;
+
+    const std::wstring& text() const;
+    void text( std::wstring value );
 
     void prepare( bool write = true );
 
@@ -226,6 +229,7 @@ struct DynamicText : public StaticText, public Active
 
     virtual void update() override;
 private:
+    StaticText content;
     bool focused = false;
     static DynamicText *focus;
 };
