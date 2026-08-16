@@ -96,6 +96,10 @@ bool input( Item &item )
     {
         type = CF_UNICODETEXT;
     }
+    else if( IsClipboardFormatAvailable( CF_DIBV5 ) )
+    {
+        type = CF_DIBV5;
+    }
     else if( IsClipboardFormatAvailable( CF_DIB ) )
     {
         type = CF_DIB;
@@ -125,7 +129,7 @@ bool input( Item &item )
         temporary = std::wstring( size / sizeof( wchar_t ) - 1, L'0' );
         data = std::get<Text>( temporary ).data();
     }
-    else if( type == CF_DIB )
+    else if( type == CF_DIB || type == CF_DIBV5 )
     {
         ImageConvert::Reference image;
         image.link = new uint8_t[size];

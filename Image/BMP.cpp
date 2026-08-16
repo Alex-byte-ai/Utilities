@@ -319,10 +319,11 @@ static void extractBmp( Format &fmt, const void *palettePtr, unsigned colorNumbe
     if( fmt.bits == 32 )
     {
         // Standard for 32bpp BI_RGB: 8 bits for Blue, Green, Red and 8 bits unused.
+        // De-facto usage: 8 bits for Blue, Green, Red and 8 bits for Alpha, if header format is "later version", unused otherwise.
         fmt.channels.push_back( { 'B', 8 } );
         fmt.channels.push_back( { 'G', 8 } );
         fmt.channels.push_back( { 'R', 8 } );
-        fmt.channels.push_back( { '_', 8 } );
+        fmt.channels.push_back( { alpha ? 'A' : '_', 8 } );
         misc();
         return;
     }
