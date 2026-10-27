@@ -196,6 +196,13 @@ auto Pow( A a, B b )
     return std::pow( a, b );
 }
 
+template<typename A, typename B>
+auto Log( A a, B b )
+{
+    static_assert( std::is_arithmetic_v<A> &&std::is_arithmetic_v<B> );
+    return std::log1p( a - 1 ) / std::log1p( b - 1 );
+}
+
 template<typename A = double>
 constexpr A Pi()
 {

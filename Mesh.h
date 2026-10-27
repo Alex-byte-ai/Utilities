@@ -70,7 +70,7 @@ public:
     void prism( const std::vector<Vector2D>& base ); // Prism of height one
     void torus( double a, double b, size_t n, size_t m ); // Torus of radius `a` (Circle is approximated by `n` sided polygon) with section of radius 'b' (Circle is approximated by `m` sided polygon)
     void sphereUV( size_t n, size_t m ); // Unit UV sphere
-    void sphereIco( size_t n ); // Unit ico sphere
+    void sphereIco( size_t n, bool simple = false, bool excessive = false ); // Unit ico sphere
 
     Mesh extract( const Bitset &faceSet ) const;
 
@@ -103,6 +103,9 @@ public:
     const std::vector<Edge> &getEdges() const;
     const std::vector<Face> &getFaces() const;
     const Groups &getGroups() const;
+
+    Vector3D getBoundingBoxSize() const;
+    void getBoundingBox( Vector3D* bottomLeftBack, Vector3D* topRightFront ) const;
 
     bool input( const std::filesystem::path &path );
     bool output( const std::filesystem::path &path ) const;

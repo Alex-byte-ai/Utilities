@@ -202,6 +202,24 @@ public:
     }
 };
 
+struct CompareUndirectedEdge
+{
+    bool operator()( const Mesh::Edge& a, const Mesh::Edge& b ) const
+    {
+        auto as = Min( a.s, a.f );
+        auto bs = Min( b.s, b.f );
+        if( as < bs )
+            return true;
+        if( as > bs )
+            return false;
+        auto af = Max( a.s, a.f );
+        auto bf = Max( b.s, b.f );
+        if( af < bf )
+            return true;
+        return false;
+    }
+};
+
 // ---------------- Material ----------------
 
 class File
@@ -267,13 +285,14 @@ private:
     std::wifstream file;
 };
 
-static void getValue( File &file, Information::Wrapper& value, bool option )
+static void getValue( File &file, Information::Wrapper& value )
 {
+    static const std::set<std::wstring> reservedWords{L"sphere", L"cube_top", L"cube_bottom", L"cube_front", L"cube_back", L"cube_left", L"cube_right"};
+
     makeException( file.word.has_value() );
     auto key = std::move( *file.word );
     file.get();
 
-    bool number = false;
     Information::Array v;
     while( file.word )
     {
@@ -284,22 +303,17 @@ static void getValue( File &file, Information::Wrapper& value, bool option )
         if( file.integer( n ) )
         {
             item = n;
-            number = true;
             v.push( item );
             file.get();
         }
         else if( file.floating( a ) )
         {
             item = a;
-            number = true;
             v.push( item );
             file.get();
         }
         else
         {
-            if( !option && number )
-                break;
-
             if( file.word == L"on" )
             {
                 item = 1;
@@ -308,15 +322,16 @@ static void getValue( File &file, Information::Wrapper& value, bool option )
             {
                 item = 0;
             }
-            else
+            else if( reservedWords.count( *file.word ) )
             {
                 item = *file.word;
             }
+            else
+            {
+                break;
+            }
             v.push( item );
             file.get();
-
-            if( option )
-                break;
         }
     }
 
@@ -346,7 +361,7 @@ static void getOptions( File &file, Information::Wrapper& texture, std::optional
 
         bool isType = file.word == L"type";
 
-        getValue( file, texture, true );
+        getValue( file, texture );
 
         if( isType )
         {
@@ -411,7 +426,7 @@ static void getMaterials( const std::filesystem::path &path, Information::Wrappe
             }
             else if( valueNames.count( *file.word ) )
             {
-                getValue( file, material, false );
+                getValue( file, material );
             }
             else
             {
@@ -422,11 +437,11 @@ static void getMaterials( const std::filesystem::path &path, Information::Wrappe
         materials.as<Information::Array>().push( std::move( item ) );
     }
 
-    static unsigned id = 0;
-    materials.output( L"output/" + std::to_wstring( id++ ) + L".txt" );
+    /*static int id = 0;
+    materials.output( L"output/" + std::to_wstring( id++ ) + L".txt" );*/
 }
 
-static void setValue( Unicode::String& data, const std::wstring& key, Information::Item& value )
+static void setValue( Unicode::String& data, const std::wstring& key, const Information::Item& value )
 {
     data << key << L" ";
 
@@ -463,7 +478,7 @@ static void setValue( Unicode::String& data, const std::wstring& key, Informatio
     data << L"\n";
 }
 
-static void setOptions( Unicode::String& data, Information::Item& texture, std::optional<std::wstring> type )
+static void setOptions( Unicode::String& data, const Information::Item& texture, std::optional<std::wstring> type )
 {
     for( auto& [key, entry] : texture.as<Information::Object>() )
     {
@@ -471,13 +486,13 @@ static void setOptions( Unicode::String& data, Information::Item& texture, std::
             continue;
 
         data << L"-";
-        setValue( data, key, const_cast<Information::Item&>( entry ) );
+        setValue( data, key, entry );
     }
     if( type )
         data << L"-type " << *type;
 }
 
-static void setMap( Unicode::String& data, std::wstring key, Information::Item& texture )
+static void setMap( Unicode::String& data, std::wstring key, const Information::Item& texture )
 {
     std::optional<std::wstring> type;
     if( key.substr( 0, 4 ) == L"refl" )
@@ -494,11 +509,11 @@ static void setMap( Unicode::String& data, std::wstring key, Information::Item& 
     data << L"\n";
 }
 
-static bool setMaterials( const std::filesystem::path &path, Information::Item& materials )
+static bool setMaterials( const std::filesystem::path &path, const Information::Item& materials )
 {
     Unicode::String data;
 
-    for( const auto &sample : materials.as<Information::Array>() )
+    for( auto &sample : materials.as<Information::Array>() )
     {
         auto& material = sample.as<Information::Object>();
 
@@ -508,11 +523,11 @@ static bool setMaterials( const std::filesystem::path &path, Information::Item& 
         {
             if( entry.is<Information::Object>() )
             {
-                setMap( data, key, const_cast<Information::Item&>( entry ) );
+                setMap( data, key, entry );
             }
             else
             {
-                setValue( data, key, const_cast<Information::Item&>( entry ) );
+                setValue( data, key, entry );
             }
         }
     }
@@ -760,7 +775,7 @@ void Mesh::plane( size_t rows, size_t columns )
 
     normals =
     {
-        {0, 0, -1},
+        {0, 0, 1},
     };
 
     auto idx = [columns]( size_t j, size_t i )
@@ -949,7 +964,7 @@ void Mesh::torus( double a, double b, size_t n, size_t m )
     }
 
     // Helper to add one triangle
-    auto addTri = [&]( size_t i0, size_t i1, size_t i2 )
+    auto addTri = [this]( size_t i0, size_t i1, size_t i2 )
     {
         size_t e0 = edges.size();
         edges.push_back( {i0, i1} );
@@ -991,10 +1006,303 @@ void Mesh::torus( double a, double b, size_t n, size_t m )
 }
 
 void Mesh::sphereUV( size_t n, size_t m )
-{}
+{
+    clear();
 
-void Mesh::sphereIco( size_t n )
-{}
+    // Helpers to add one point
+    auto pi = Pi();
+    auto pi2 = pi * 2;
+    auto addPoint = [&]( const Vector3D & v )
+    {
+        points.emplace_back( v );
+        normals.emplace_back( v );
+
+        auto longitude = ArcTan2( v.y, v.x ) / pi2 + 0.5;
+        auto latitude = ArcTan2( v.z, Sqrt( v.x * v.x + v.y * v.y ) ) / pi2 + 0.5;
+        texturing.emplace_back( longitude, latitude, 0.0 );
+    };
+    auto addPoint3 = [&]( double x, double y, double z )
+    {
+        addPoint( Vector3D( x, y, z ) );
+    };
+
+    size_t count = m * n + 2;
+    normals.reserve( count );
+    points.reserve( count );
+    texturing.reserve( count );
+    count -= 2;
+
+    addPoint3( 0.0, 0.0, -1.0 );
+    addPoint3( 0.0, 0.0, 1.0 );
+
+    for( size_t j = 1; j <= m; ++j )
+    {
+        double angle = pi * j / ( m + 1 );
+        addPoint3( Sin( angle ), 0.0, -Cos( angle ) );
+    }
+
+    for( size_t i = 1; i < n; ++i )
+    {
+        double angle = pi2 * i / n;
+        Affine3D rotation( Matrix3D::Rotation( Vector3D( 0.0, 0.0, 1.0 ), angle ) );
+
+        for( size_t j = 0; j < m; ++j )
+            addPoint( rotation( points[j + 2] ) );
+    }
+
+    // Helper to add one triangle
+    auto addTri = [this]( size_t i0, size_t i1, size_t i2 )
+    {
+        size_t e0 = edges.size();
+        edges.push_back( {i0, i1} );
+
+        size_t e1 = edges.size();
+        edges.push_back( {i1, i2} );
+
+        size_t e2 = edges.size();
+        edges.push_back( {i2, i0} );
+
+        faces.push_back( Face{ Triplet{ e0, e1, e2 }, Triplet{ i0, i1, i2 }, Triplet{ i0, i1, i2 } } );
+    };
+
+    auto right = [&]( size_t k )
+    {
+        return ( k + m ) % count;
+    };
+
+    auto top = [&]( size_t k )
+    {
+        return ( k / m ) * m + ( k + 1 ) % m;
+    };
+
+    // For each trapezoid, make two CCW triangles
+    // Close holes at the poles with triangle fans
+    size_t k = 0;
+    for( size_t i = 0; i < n; ++i )
+    {
+        for( size_t j = 1; j <= m; ++j )
+        {
+            size_t ka, kb, kc;
+            ka = right( k );
+            kb = top( k );
+            kc = right( kb );
+            if( j == 1 )
+            {
+                addTri( 0, ka + 2, k + 2 );
+            }
+            if( j < m )
+            {
+                addTri( k + 2, kc + 2, kb + 2 );
+                addTri( k + 2, ka + 2, kc + 2 );
+            }
+            else
+            {
+                addTri( 1, k + 2, ka + 2 );
+            }
+            ++k;
+        }
+    }
+}
+
+void Mesh::sphereIco( size_t n, bool simple, bool excessive )
+{
+    clear();
+
+    // Helpers to add one point
+    auto pi2 = Pi() * 2;
+    auto addPoint = [&]( const Vector3D & v )
+    {
+        points.emplace_back( v );
+        normals.emplace_back( v );
+
+        auto longitude = ArcTan2( v.y, v.x ) / pi2 + 0.5;
+        auto latitude = ArcTan2( v.z, Sqrt( v.x * v.x + v.y * v.y ) ) / pi2 + 0.5;
+        texturing.emplace_back( longitude, latitude, 0.0 );
+    };
+    auto addPoint3 = [&]( double x, double y, double z )
+    {
+        addPoint( Vector3D( x, y, z ) );
+    };
+
+    // Helper to add one triangle
+    std::vector<Edge> newEdges;
+    std::vector<Face> newFaces;
+    auto addTri = [&]( size_t i0, size_t i1, size_t i2 )
+    {
+        size_t e0 = newEdges.size();
+        newEdges.push_back( {i0, i1} );
+
+        size_t e1 = newEdges.size();
+        newEdges.push_back( {i1, i2} );
+
+        size_t e2 = newEdges.size();
+        newEdges.push_back( {i2, i0} );
+
+        newFaces.push_back( Face{ Triplet{ e0, e1, e2 }, Triplet{ i0, i1, i2 }, Triplet{ i0, i1, i2 } } );
+    };
+
+    // Update mesh from temporary buffer
+    auto update = [&]()
+    {
+        edges = std::move( newEdges );
+        faces = std::move( newFaces );
+    };
+
+    // Initial points
+    if( simple )
+    {
+        addPoint3( 0.0, 0.0, 1.0 );
+        addPoint3( 0.0, 2 * Sqrt( 2.0 ) / 3, -1.0 / 3 );
+        addPoint3( Sqrt( 6.0 ) / 3, -Sqrt( 2.0 ) / 3, -1.0 / 3 );
+        addPoint3( -Sqrt( 6.0 ) / 3, -Sqrt( 2.0 ) / 3, -1.0 / 3 );
+
+        addTri( 0, 1, 2 );
+        addTri( 0, 1, 3 );
+        addTri( 0, 2, 3 );
+        addTri( 2, 3, 1 );
+    }
+    else
+    {
+        double l = 2 * Sqrt( 5.0 ) / 5;
+
+        addPoint3( 0.0, 0.0, -1.0 );
+        for( int j = 4; j >= 0; --j )
+        {
+            double ang = ( 0.2 + j * 0.4 ) * Pi();
+            addPoint3( Cos( ang ) * l, Sin( ang ) * l, -0.5 * l );
+        }
+        for( int j = 4; j >= 0; --j )
+        {
+            double ang = j * 0.4 * Pi();
+            addPoint3( Cos( ang ) * l, Sin( ang ) * l,  0.5 * l );
+        }
+        addPoint3( 0.0, 0.0,  1.0 );
+
+        addTri( 0, 1, 2 );
+        addTri( 0, 2, 3 );
+        addTri( 0, 3, 4 );
+        addTri( 0, 4, 5 );
+        addTri( 0, 5, 1 );
+        addTri( 10, 11, 6 );
+        addTri( 11, 7, 6 );
+        addTri( 11, 8, 7 );
+        addTri( 11, 9, 8 );
+        addTri( 11, 10, 9 );
+        addTri( 6, 1, 10 );
+        addTri( 2, 6, 7 );
+        addTri( 3, 7, 8 );
+        addTri( 4, 8, 9 );
+        addTri( 5, 9, 10 );
+        addTri( 6, 2, 1 );
+        addTri( 7, 3, 2 );
+        addTri( 8, 4, 3 );
+        addTri( 9, 5, 4 );
+        addTri( 10, 1, 5 );
+    }
+
+    update();
+
+    // Building sphere by bisecting initial shape
+    auto bisect = [&]()
+    {
+        if( excessive )
+        {
+            for( const auto& f : faces )
+            {
+                // Bisect face
+                auto id0 = edges[f.p.a].s;
+                auto id1 = edges[f.p.b].s;
+                auto id2 = edges[f.p.c].s;
+
+                const auto p0 = points[id0];
+                const auto p1 = points[id1];
+                const auto p2 = points[id2];
+
+                auto id3 = points.size();
+                addPoint( ( p0 + p1 ).Normal() );
+
+                auto id4 = points.size();
+                addPoint( ( p1 + p2 ).Normal() );
+
+                auto id5 = points.size();
+                addPoint( ( p2 + p0 ).Normal() );
+
+                addTri( id0, id3, id5 );
+                addTri( id1, id4, id3 );
+                addTri( id2, id5, id4 );
+                addTri( id3, id4, id5 );
+            }
+        }
+        else
+        {
+            std::map<Edge, size_t, CompareUndirectedEdge> undirected;
+            for( const auto& e : edges )
+            {
+                // Bisect edge
+                auto [iterator, added] = undirected.emplace( e, points.size() );
+                auto id = iterator->second;
+
+                if( added )
+                    addPoint( ( points[e.s] + points[e.f] ).Normal() );
+
+                newEdges.emplace_back( Edge{ e.s, id } );
+                newEdges.emplace_back( Edge{ id, e.f } );
+            }
+            undirected.clear();
+
+            for( const auto& f : faces )
+            {
+                // Bisect face
+                size_t id0  = 2 * f.p.a;
+                size_t id1  = id0 + 1;
+
+                size_t id2  = 2 * f.p.b;
+                size_t id3  = id2 + 1;
+
+                size_t id4  = 2 * f.p.c;
+                size_t id5  = id4 + 1;
+
+                auto m0 = newEdges[id0].f;
+                auto m1 = newEdges[id2].f;
+                auto m2 = newEdges[id4].f;
+
+                auto c0 = newEdges[id0].s;
+                auto c1 = newEdges[id2].s;
+                auto c2 = newEdges[id4].s;
+
+                auto id6 = newEdges.size();
+                newEdges.emplace_back( Edge{ m1, m0 } );
+
+                auto id7 = newEdges.size();
+                newEdges.emplace_back( Edge{ m2, m1 } );
+
+                auto id8 = newEdges.size();
+                newEdges.emplace_back( Edge{ m0, m2 } );
+
+                auto id9 = newEdges.size();
+                newEdges.emplace_back( Edge{ m0, m1 } );
+
+                auto id10 = newEdges.size();
+                newEdges.emplace_back( Edge{ m1, m2 } );
+
+                auto id11 = newEdges.size();
+                newEdges.emplace_back( Edge{ m2, m0 } );
+
+                newFaces.emplace_back( Face{ Triplet{ id0, id8, id5 }, Triplet{ c0, m0, m2 }, Triplet{ c0, m0, m2 } } );
+                newFaces.emplace_back( Face{ Triplet{ id1, id2, id6 }, Triplet{ m0, c1, m1 }, Triplet{ m0, c1, m1 } } );
+                newFaces.emplace_back( Face{ Triplet{ id7, id3, id4 }, Triplet{ m2, m1, c2 }, Triplet{ m2, m1, c2 } } );
+                newFaces.emplace_back( Face{ Triplet{ id9, id10, id11 }, Triplet{ m0, m1, m2 }, Triplet{ m0, m1, m2 } } );
+            }
+        }
+        update();
+    };
+
+    while( n > 0 )
+    {
+        bisect();
+        --n;
+    }
+}
 
 Mesh Mesh::extract( const Bitset &faceSet ) const
 {
@@ -1339,11 +1647,23 @@ std::optional<Information::Item>& Mesh::getMaterials()
 
     if( materialsFile )
     {
+        auto type = materialsFile->extension();
         materials.emplace();
-        Information::Wrapper m( *materials );
         try
         {
-            ::getMaterials( *materialsFile, m );
+            if( type == L".mtl" )
+            {
+                Information::Wrapper m( *materials );
+                ::getMaterials( *materialsFile, m );
+            }
+            else if( type == L".material" )
+            {
+                materials->input( *materialsFile );
+            }
+            else
+            {
+                materials.reset();
+            }
         }
         catch( ... )
         {
@@ -1394,6 +1714,63 @@ const Mesh::Groups &Mesh::getGroups() const
     return groups;
 }
 
+Vector3D Mesh::getBoundingBoxSize() const
+{
+    auto maximum = std::numeric_limits<double>::max(), minimum = std::numeric_limits<double>::lowest();
+    Vector3D lower( maximum, maximum, maximum ), upper( minimum, minimum, minimum );
+    for( auto& point : points )
+    {
+        if( lower.x > point.x )
+            lower.x = point.x;
+        if( lower.y > point.y )
+            lower.y = point.y;
+        if( lower.z > point.z )
+            lower.z = point.z;
+        if( upper.x < point.x )
+            upper.x = point.x;
+        if( upper.y < point.y )
+            upper.y = point.y;
+        if( upper.z < point.z )
+            upper.z = point.z;
+    }
+    return upper - lower;
+}
+
+void Mesh::getBoundingBox( Vector3D* bottomLeftBack, Vector3D* topRightFront ) const
+{
+    if( bottomLeftBack )
+    {
+        auto maximum = std::numeric_limits<double>::max();
+        Vector3D lower( maximum, maximum, maximum );
+        for( auto& point : points )
+        {
+            if( lower.x > point.x )
+                lower.x = point.x;
+            if( lower.y > point.y )
+                lower.y = point.y;
+            if( lower.z > point.z )
+                lower.z = point.z;
+        }
+        *bottomLeftBack = lower;
+    }
+
+    if( topRightFront )
+    {
+        auto minimum = std::numeric_limits<double>::lowest();
+        Vector3D upper( minimum, minimum, minimum );
+        for( auto& point : points )
+        {
+            if( upper.x < point.x )
+                upper.x = point.x;
+            if( upper.y < point.y )
+                upper.y = point.y;
+            if( upper.z < point.z )
+                upper.z = point.z;
+        }
+        *topRightFront = upper;
+    }
+}
+
 bool Mesh::input( const std::filesystem::path &path )
 {
     try
@@ -1403,275 +1780,428 @@ bool Mesh::input( const std::filesystem::path &path )
 
         clear();
 
-        Bitset *o = nullptr, *g = nullptr, *m = nullptr;
-
-        auto get = [&s]( Bitset *&bitset, std::optional<std::map<std::wstring, Bitset>> &map )
+        auto type = path.extension();
+        if( type == L".mesh" )
         {
-            if( !map )
-                return;
-            bitset = &map->emplace( ( std::wstring )s.token.s, Bitset() ).first->second;
-        };
-
-        while( s.token.t != Scanner::Nil )
-        {
-            s.token.error( Scanner::Name );
-
-            if( s.token.s == "mtllib" )
-            {
-                s.getLine();
-
-                if( materialsFile )
-                    return false;
-
-                std::wstring string;
-                if( !s.token.s.EncodeW( string ) )
-                    return false;
-
-                std::filesystem::path secondary = string;
-                materialsFile = secondary.is_absolute() ? secondary : path.parent_path() / secondary;
-
-                s.getToken();
-
-                continue;
-            }
-
-            if( s.token.s == "o" )
-            {
-                s.getLine();
-                get( o, groups.o );
-                s.getToken();
-
-                continue;
-            }
-
-            if( s.token.s == "g" )
-            {
-                s.getLine();
-                get( g, groups.g );
-                s.getToken();
-
-                continue;
-            }
-
-            if( s.token.s == "usemtl" )
+            auto getGeometry = [&s]( auto & output )
             {
                 s.getToken();
-                get( m, groups.m );
+                s.token.error( Scanner::Colon );
                 s.getToken();
 
-                continue;
-            }
+                s.token.error( Scanner::Text );
+                std::ifstream data( std::filesystem::path( ( std::wstring )s.token.s ), std::ios::binary );
 
-            if( s.token.s == "s" )
-            {
-                s.getToken();
-                // Smooth shading: on / off / 0 / 1
-                s.getToken();
+                size_t m = 0;
+                data.read( ( char* )&m, sizeof( m ) );
 
-                continue;
-            }
+                unsigned char n = 0;
+                data.read( ( char* )&n, sizeof( n ) );
+                if( n > 3 )
+                    s.token.error( L"Can't use higher than 3D geometry." );
 
-            auto getVector = [&]( Vector3D & v )
-            {
-                s.getToken();
-                v.x = s.token.x;
-                s.token.error( Scanner::Real );
-
-                s.getToken();
-                v.y = s.token.x;
-                s.token.error( Scanner::Real );
-
-                s.getToken();
-                if( s.token.t == Scanner::Real )
+                output.reserve( m );
+                while( m > 0 )
                 {
-                    v.z = s.token.x;
-                    s.getToken();
+                    auto& v = output.emplace_back();
+                    if( n > 0 )
+                        data.read( ( char* )&v.x, sizeof( v.x ) );
+                    if( n > 1 )
+                        data.read( ( char* )&v.y, sizeof( v.y ) );
+                    if( n > 2 )
+                        data.read( ( char* )&v.z, sizeof( v.z ) );
+                    --m;
+                }
+
+                s.getToken();
+
+                s.token.error( Scanner::Semicolon );
+                s.getToken();
+            };
+
+            auto getEdges = [&s]( auto & output )
+            {
+                s.getToken();
+                s.token.error( Scanner::Colon );
+                s.getToken();
+
+                s.token.error( Scanner::Text );
+                std::ifstream data( std::filesystem::path( ( std::wstring )s.token.s ) );
+
+                size_t m = 0;
+                data >> m;
+
+                output.reserve( m );
+                while( m > 0 )
+                {
+                    auto& edge = output.emplace_back();
+                    data >> edge.s;
+                    data >> edge.f;
+                    --m;
+                }
+
+                s.getToken();
+
+                s.token.error( Scanner::Semicolon );
+                s.getToken();
+            };
+
+            auto getFaces = [&s]( auto & output )
+            {
+                s.getToken();
+                s.token.error( Scanner::Colon );
+                s.getToken();
+
+                s.token.error( Scanner::Text );
+                std::ifstream data( std::filesystem::path( ( std::wstring )s.token.s ) );
+
+                size_t m = 0;
+                data >> m;
+
+                output.reserve( m );
+                while( m > 0 )
+                {
+                    auto& face = output.emplace_back();
+                    data >> face.p.a;
+                    data >> face.n.a;
+                    data >> face.t.a;
+                    data >> face.p.b;
+                    data >> face.n.b;
+                    data >> face.t.b;
+                    data >> face.p.c;
+                    data >> face.n.c;
+                    data >> face.t.c;
+                    --m;
+                }
+
+                s.getToken();
+
+                s.token.error( Scanner::Semicolon );
+                s.getToken();
+            };
+
+            auto getMaterial = [&s]( auto & output )
+            {
+                s.getToken();
+                s.token.error( Scanner::Colon );
+                s.getToken();
+
+                s.token.error( Scanner::Text );
+                output = std::filesystem::path( ( std::wstring )s.token.s );
+                s.getToken();
+
+                s.token.error( Scanner::Semicolon );
+                s.getToken();
+            };
+
+            while( s.token.t != Scanner::Nil )
+            {
+                s.token.error( Scanner::Name );
+                if( s.token.s == "points" )
+                {
+                    getGeometry( points );
+                }
+                else if( s.token.s == "normals" )
+                {
+                    getGeometry( normals );
+                }
+                else if( s.token.s == "texturing" )
+                {
+                    getGeometry( texturing );
+                }
+                else if( s.token.s == "edges" )
+                {
+                    getEdges( edges );
+                }
+                else if( s.token.s == "faces" )
+                {
+                    getFaces( faces );
+                }
+                else if( s.token.s == "material" )
+                {
+                    getMaterial( materialsFile );
                 }
                 else
                 {
-                    v.z = 0;
+                    s.token.error( L"Expected points, normals, texturing, edges, faces or material to be declared." );
                 }
+            }
+        }
+        else if( type == L".obj" )
+        {
+            Bitset *o = nullptr, *g = nullptr, *m = nullptr;
 
-                return true;
+            auto get = [&s]( Bitset *&bitset, std::optional<std::map<std::wstring, Bitset>> &map )
+            {
+                if( !map )
+                    return;
+                bitset = &map->emplace( ( std::wstring )s.token.s, Bitset() ).first->second;
             };
 
-            if( s.token.s == "v" )
+            while( s.token.t != Scanner::Nil )
             {
-                Vector3D v;
-                if( !getVector( v ) )
-                    return false;
-                points.push_back( v );
+                s.token.error( Scanner::Name );
 
-                continue;
-            }
-
-            if( s.token.s == "vt" )
-            {
-                Vector3D vt;
-                if( !getVector( vt ) )
-                    return false;
-                texturing.push_back( vt );
-
-                continue;
-            }
-
-            if( s.token.s == "vn" )
-            {
-                Vector3D vn;
-                if( !getVector( vn ) )
-                    return false;
-                normals.push_back( vn );
-
-                continue;
-            }
-
-            if( s.token.s == "vp" )
-            {
-                Vector3D vp;
-                if( !getVector( vp ) )
-                    return false;
-
-                continue;
-            }
-
-            if( s.token.s == "l" )
-            {
-                s.getToken();
-                // Polyline
-                while( s.token.t == Scanner::Int )
+                if( s.token.s == "mtllib" )
                 {
+                    s.getLine();
+
+                    if( materialsFile )
+                        return false;
+
+                    std::wstring string;
+                    if( !s.token.s.EncodeW( string ) )
+                        return false;
+
+                    std::filesystem::path secondary = string;
+                    materialsFile = secondary.is_absolute() ? secondary : path.parent_path() / secondary;
+
                     s.getToken();
+
+                    continue;
                 }
 
-                continue;
-            }
-
-            if( s.token.s == "f" )
-            {
-                std::vector<std::tuple<size_t, std::optional<size_t>, std::optional<size_t>>> vertices;
-
-                s.getToken();
-
-                while( s.token.t == Scanner::Int )
+                if( s.token.s == "o" )
                 {
-                    std::optional<size_t> normal, texture;
-                    bool tex = false, norm = false;
-
-                    size_t point = s.token.n - 1;
+                    s.getLine();
+                    get( o, groups.o );
                     s.getToken();
 
-                    if( s.token.t == Scanner::Slash )
+                    continue;
+                }
+
+                if( s.token.s == "g" )
+                {
+                    s.getLine();
+                    get( g, groups.g );
+                    s.getToken();
+
+                    continue;
+                }
+
+                if( s.token.s == "usemtl" )
+                {
+                    s.getToken();
+                    get( m, groups.m );
+                    s.getToken();
+
+                    continue;
+                }
+
+                if( s.token.s == "s" )
+                {
+                    s.getToken();
+                    // Smooth shading: on / off / 0 / 1
+                    s.getToken();
+
+                    continue;
+                }
+
+                auto getVector = [&]( Vector3D & v )
+                {
+                    s.getToken();
+                    v.x = s.token.x;
+                    s.token.error( Scanner::Real );
+
+                    s.getToken();
+                    v.y = s.token.x;
+                    s.token.error( Scanner::Real );
+
+                    s.getToken();
+                    if( s.token.t == Scanner::Real )
+                    {
+                        v.z = s.token.x;
+                        s.getToken();
+                    }
+                    else
+                    {
+                        v.z = 0;
+                    }
+
+                    return true;
+                };
+
+                if( s.token.s == "v" )
+                {
+                    Vector3D v;
+                    if( !getVector( v ) )
+                        return false;
+                    points.push_back( v );
+
+                    continue;
+                }
+
+                if( s.token.s == "vt" )
+                {
+                    Vector3D vt;
+                    if( !getVector( vt ) )
+                        return false;
+                    texturing.push_back( vt );
+
+                    continue;
+                }
+
+                if( s.token.s == "vn" )
+                {
+                    Vector3D vn;
+                    if( !getVector( vn ) )
+                        return false;
+                    normals.push_back( vn );
+
+                    continue;
+                }
+
+                if( s.token.s == "vp" )
+                {
+                    Vector3D vp;
+                    if( !getVector( vp ) )
+                        return false;
+
+                    continue;
+                }
+
+                if( s.token.s == "l" )
+                {
+                    s.getToken();
+                    // Polyline
+                    while( s.token.t == Scanner::Int )
                     {
                         s.getToken();
+                    }
 
-                        tex = s.token.t != Scanner::Slash;
-                        norm = !tex;
+                    continue;
+                }
 
-                        if( tex )
+                if( s.token.s == "f" )
+                {
+                    std::vector<std::tuple<size_t, std::optional<size_t>, std::optional<size_t>>> vertices;
+
+                    s.getToken();
+
+                    while( s.token.t == Scanner::Int )
+                    {
+                        std::optional<size_t> normal, texture;
+                        bool tex = false, norm = false;
+
+                        size_t point = s.token.n - 1;
+                        s.getToken();
+
+                        if( s.token.t == Scanner::Slash )
                         {
-                            s.token.error( Scanner::Int );
-
-                            texture = s.token.n - 1;
                             s.getToken();
 
-                            norm = s.token.t == Scanner::Slash;
-                            if( norm )
+                            tex = s.token.t != Scanner::Slash;
+                            norm = !tex;
+
+                            if( tex )
+                            {
+                                s.token.error( Scanner::Int );
+
+                                texture = s.token.n - 1;
+                                s.getToken();
+
+                                norm = s.token.t == Scanner::Slash;
+                                if( norm )
+                                {
+                                    s.getToken();
+                                }
+                            }
+                            else
                             {
                                 s.getToken();
                             }
-                        }
-                        else
-                        {
-                            s.getToken();
+
+                            if( norm )
+                            {
+                                s.token.error( Scanner::Int );
+
+                                normal = s.token.n - 1;
+                                s.getToken();
+                            }
                         }
 
-                        if( norm )
-                        {
-                            s.token.error( Scanner::Int );
-
-                            normal = s.token.n - 1;
-                            s.getToken();
-                        }
+                        vertices.emplace_back( point, normal, texture );
                     }
 
-                    vertices.emplace_back( point, normal, texture );
-                }
-
-                if( vertices.size() < 3 )
-                    return false;
-
-                bool tex = true;
-
-                auto getTexture = [this, &tex]( const auto & vertex )
-                {
-                    if( std::get<2>( vertex ).has_value() && *std::get<2>( vertex ) < texturing.size() )
-                        return *std::get<2>( vertex );
-
-                    if( tex )
-                    {
-                        texturing.push_back( Vector3D( 0, 0, 0 ) );
-                        tex = false;
-                    }
-
-                    return texturing.size() - 1;
-                };
-
-                auto getNormal = [this]( const auto & vertex, size_t e0, size_t e1 )
-                {
-                    if( std::get<1>( vertex ).has_value() && *std::get<1>( vertex ) < normals.size() )
-                        return *std::get<1>( vertex );
-
-                    const auto &edge0 = edges[e0];
-                    const auto &edge1 = edges[e1];
-
-                    const auto &p0 = points[edge0.s];
-                    const auto &p1 = points[edge0.f];
-                    const auto &p2 = points[edge1.f];
-
-                    auto n = normals.size();
-                    normals.push_back( ( p1 - p0 ).M( p2 - p1 ).Normal() );
-                    return n;
-                };
-
-                for( size_t i = 1; i < vertices.size() - 1; ++i )
-                {
-                    const auto &v0 = vertices[0];
-                    const auto &v1 = vertices[i];
-                    const auto &v2 = vertices[( i + 1 ) % vertices.size()];
-                    if( std::get<0>( v0 ) >= points.size() || std::get<0>( v1 ) >= points.size() || std::get<0>( v2 ) >= points.size() )
+                    if( vertices.size() < 3 )
                         return false;
 
-                    auto e0 = edges.size();
-                    edges.push_back( Edge{ std::get<0>( v0 ), std::get<0>( v1 ) } );
+                    bool tex = true;
 
-                    auto e1 = edges.size();
-                    edges.push_back( Edge{ std::get<0>( v1 ), std::get<0>( v2 ) } );
+                    auto getTexture = [this, &tex]( const auto & vertex )
+                    {
+                        if( std::get<2>( vertex ).has_value() && *std::get<2>( vertex ) < texturing.size() )
+                            return *std::get<2>( vertex );
 
-                    auto e2 = edges.size();
-                    edges.push_back( Edge{ std::get<0>( v2 ), std::get<0>( v0 ) } );
+                        if( tex )
+                        {
+                            texturing.push_back( Vector3D( 0, 0, 0 ) );
+                            tex = false;
+                        }
 
-                    if( o )
-                        o->set( faces.size() );
-                    if( g )
-                        g->set( faces.size() );
-                    if( m )
-                        m->set( faces.size() );
-                    faces.push_back( Face{ Triplet{ e0, e1, e2 },
-                                           Triplet{ getNormal( v0, e0, e1 ), getNormal( v1, e1, e2 ), getNormal( v2, e2, e0 ) },
-                                           Triplet{ getTexture( v0 ), getTexture( v1 ), getTexture( v2 ) } } );
+                        return texturing.size() - 1;
+                    };
+
+                    auto getNormal = [this]( const auto & vertex, size_t e0, size_t e1 )
+                    {
+                        if( std::get<1>( vertex ).has_value() && *std::get<1>( vertex ) < normals.size() )
+                            return *std::get<1>( vertex );
+
+                        const auto &edge0 = edges[e0];
+                        const auto &edge1 = edges[e1];
+
+                        const auto &p0 = points[edge0.s];
+                        const auto &p1 = points[edge0.f];
+                        const auto &p2 = points[edge1.f];
+
+                        auto n = normals.size();
+                        normals.push_back( ( p1 - p0 ).M( p2 - p1 ).Normal() );
+                        return n;
+                    };
+
+                    for( size_t i = 1; i < vertices.size() - 1; ++i )
+                    {
+                        const auto &v0 = vertices[0];
+                        const auto &v1 = vertices[i];
+                        const auto &v2 = vertices[( i + 1 ) % vertices.size()];
+                        if( std::get<0>( v0 ) >= points.size() || std::get<0>( v1 ) >= points.size() || std::get<0>( v2 ) >= points.size() )
+                            return false;
+
+                        auto e0 = edges.size();
+                        edges.push_back( Edge{ std::get<0>( v0 ), std::get<0>( v1 ) } );
+
+                        auto e1 = edges.size();
+                        edges.push_back( Edge{ std::get<0>( v1 ), std::get<0>( v2 ) } );
+
+                        auto e2 = edges.size();
+                        edges.push_back( Edge{ std::get<0>( v2 ), std::get<0>( v0 ) } );
+
+                        if( o )
+                            o->set( faces.size() );
+                        if( g )
+                            g->set( faces.size() );
+                        if( m )
+                            m->set( faces.size() );
+                        faces.push_back( Face{ Triplet{ e0, e1, e2 },
+                                               Triplet{ getNormal( v0, e0, e1 ), getNormal( v1, e1, e2 ), getNormal( v2, e2, e0 ) },
+                                               Triplet{ getTexture( v0 ), getTexture( v1 ), getTexture( v2 ) } } );
+                    }
+
+                    continue;
                 }
 
-                continue;
+                s.token.error( L"Unknown command." );
             }
-
-            s.token.error( L"Unknown command." );
+        }
+        else
+        {
+            return false;
         }
     }
     catch( ... )
     {
         return false;
     }
-
     return true;
 }
 
@@ -1679,58 +2209,100 @@ bool Mesh::output( const std::filesystem::path &path ) const
 {
     Unicode::String data;
 
-    if( materialsFile )
+    auto name = path.stem().wstring();
+    auto folder = path.parent_path();
+    auto type = path.extension();
+    if( type == L".mesh" )
     {
-        auto materialOutput = materialsFile->filename();
-        data << L"mtllib " << materialOutput.wstring() << L"\n";
-        materialOutput = path.parent_path() / materialOutput;
+        auto output = [&]( auto & sample, auto description )
+        {
+            data << description << L": \"" << name << L"." << description << L"\"\n";
 
-        if( materials )
+            size_t s = sample.size();
+            std::ofstream f( folder / ( name + L"." + description ), std::ios::binary );
+            f.write( ( char* )&s, sizeof( s ) );
+            f.write( ( char* )sample.data(), s * sizeof( sample[0] ) );
+        };
+
+        auto outputEdges = [&]( auto & sample, auto description )
         {
-            ::setMaterials( materialOutput, *const_cast<Mesh*>( this )->materials );
+            data << description << L": \"" << name << L"." << description << L"\"\n";
+
+            size_t s = sample.size();
+            std::ofstream f( folder / ( name + L"." + description ) );
+            f << s;
+            for( auto& value : sample )
+                f << L"\n" << value.s << L" " << value.f;
+        };
+
+        auto outputFaces = [&]( auto & sample, auto description )
+        {
+            data << description << L": \"" << name << L"." << description << L"\"\n";
+
+            size_t s = sample.size();
+            std::ofstream f( folder / ( name + L"." + description ) );
+            f << s;
+            for( auto& value : sample )
+                f << L"\n" << value.p.a << L" " << value.n.a << L" " << value.t.a << L" " << value.p.b << L" " << value.n.b << L" " << value.t.b << L" " << value.p.c << L" " << value.n.c << L" " << value.t.c;
+        };
+
+        output( points, L"points" );
+        output( normals, L"normals" );
+        output( texturing, L"texturing" );
+        outputEdges( edges, L"edges" );
+        outputFaces( faces, L"faces" );
+
+        auto materialOutput = folder / ( ( materialsFile ? materialsFile->stem().wstring() : name ) + L".material" );
+        materials.value().output( materialOutput );
+    }
+    else if( type == L".obj" )
+    {
+        if( materialsFile )
+        {
+            auto materialOutput = materialsFile->filename();
+            data << L"mtllib " << materialOutput.wstring() << L"\n";
+            materialOutput = folder / materialOutput;
+            ::setMaterials( materialOutput, materials.value() );
         }
-        else
+
+        data << L"o Mesh\n";
+
+        for( auto &v : points )
+            data << L"v " << v.x << L" " << v.y << L" " << v.z << L"\n";
+
+        for( auto &v : normals )
+            data << L"vn " << v.x << L" " << v.y << L" " << v.z << L"\n";
+
+        for( auto &v : texturing )
+            data << L"vt " << v.x << L" " << v.y << L" " << v.z << L"\n";
+
+        for( auto &face : faces )
         {
-            Information::Item temporary;
-            Information::Wrapper t( temporary );
-            ::getMaterials( *materialsFile, t );
-            ::setMaterials( materialOutput, temporary );
+            auto &edgeA = edges[face.p.a];
+            auto &edgeB = edges[face.p.b];
+            auto &edgeC = edges[face.p.c];
+
+            auto pointA = edgeA.s + 1;
+            auto pointB = edgeB.s + 1;
+            auto pointC = edgeC.s + 1;
+
+            auto texturingA = face.t.a + 1;
+            auto texturingB = face.t.b + 1;
+            auto texturingC = face.t.c + 1;
+
+            auto normalA = face.n.a + 1;
+            auto normalB = face.n.b + 1;
+            auto normalC = face.n.c + 1;
+
+            data << L"f ";
+            data << pointA << L"/" << texturingA << L"/" << normalA << L" ";
+            data << pointB << L"/" << texturingB << L"/" << normalB << L" ";
+            data << pointC << L"/" << texturingC << L"/" << normalC << L"\n";
         }
     }
-
-    data << L"o Mesh\n";
-
-    for( auto &v : points )
-        data << L"v " << v.x << L" " << v.y << L" " << v.z << L"\n";
-
-    for( auto &v : normals )
-        data << L"vn " << v.x << L" " << v.y << L" " << v.z << L"\n";
-
-    for( auto &v : texturing )
-        data << L"vt " << v.x << L" " << v.y << L" " << v.z << L"\n";
-
-    for( auto &face : faces )
+    else
     {
-        auto &edgeA = edges[face.p.a];
-        auto &edgeB = edges[face.p.b];
-        auto &edgeC = edges[face.p.c];
-
-        auto pointA = edgeA.s + 1;
-        auto pointB = edgeB.s + 1;
-        auto pointC = edgeC.s + 1;
-
-        auto texturingA = face.t.a + 1;
-        auto texturingB = face.t.b + 1;
-        auto texturingC = face.t.c + 1;
-
-        auto normalA = face.n.a + 1;
-        auto normalB = face.n.b + 1;
-        auto normalC = face.n.c + 1;
-
-        data << L"f ";
-        data << pointA << L"/" << texturingA << L"/" << normalA << L" ";
-        data << pointB << L"/" << texturingB << L"/" << normalB << L" ";
-        data << pointC << L"/" << texturingC << L"/" << normalC << L"\n";
+        return false;
     }
 
     size_t pos = 0;

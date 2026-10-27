@@ -93,19 +93,9 @@ void Object::push( const KeyVerbatim &key, Item &&item )
     }
 }
 
-unsigned Object::size() const
+size_t Object::size() const
 {
     return items.size();
-}
-
-std::map<KeyVerbatim, Item>::const_iterator Object::begin() const
-{
-    return items.cbegin();
-}
-
-std::map<KeyVerbatim, Item>::const_iterator Object::end() const
-{
-    return items.cend();
 }
 
 //Array
@@ -183,19 +173,9 @@ void Array::push( const KeyNumeric &key, Item &&item )
     items[key] = item;
 }
 
-unsigned Array::size() const
+size_t Array::size() const
 {
     return items.size();
-}
-
-std::vector<Item>::const_iterator Array::begin() const
-{
-    return items.cbegin();
-}
-
-std::vector<Item>::const_iterator Array::end() const
-{
-    return items.cend();
 }
 
 // Wrapper
@@ -218,7 +198,7 @@ Item &Wrapper::operator=( Item &&item )
 
 Wrapper Wrapper::operator()( const KeyVerbatim &key )
 {
-    if( self && !self->is<Null>() && !self->is<Object>() )
+    if( !is<Null>() && !is<Object>() )
     {
         Wrapper result;
         return result;
@@ -253,7 +233,7 @@ Wrapper Wrapper::operator()( const KeyVerbatim &key )
 
 Wrapper Wrapper::operator[]( const KeyNumeric &key )
 {
-    if( self && !self->is<Null>() && !self->is<Array>() )
+    if( !is<Null>() && !is<Array>() )
     {
         Wrapper result;
         return result;
@@ -618,7 +598,7 @@ void setObject( Unicode::String& data, const Object & object, const Unicode::Str
     unsigned i = 0, size = object.size();
 
     data << "{\n";
-    for( auto& [key, item] : object )
+    for( const auto& [key, item] : object )
     {
         data << t << key << ": ";
         setItem( data, item, t );

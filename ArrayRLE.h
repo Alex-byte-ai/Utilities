@@ -213,7 +213,7 @@ private:
             return;
         }
 
-        const T boundaryValue = a->back();
+        T boundaryValue = a->back();
 
         // Find equal suffix in left.
         size_t suffix = 1;
@@ -250,7 +250,7 @@ private:
         }
 
         // Common boundary run.
-        result.emplace_back( Repetitive{suffix + prefix, std::move( const_cast<T&>( boundaryValue ) )} );
+        result.emplace_back( Repetitive{suffix + prefix, std::move( boundaryValue )} );
 
         // Right part.
         if( !rightBecomesEmpty )

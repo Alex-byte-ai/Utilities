@@ -40,10 +40,37 @@ public:
     void push( const KeyVerbatim &key, const Item &item );
     void push( const KeyVerbatim &key, Item &&item );
 
-    unsigned size() const;
+    size_t size() const;
 
-    std::map<KeyVerbatim, Item>::const_iterator begin() const;
-    std::map<KeyVerbatim, Item>::const_iterator end() const;
+    auto begin()
+    {
+        return items.begin();
+    }
+
+    auto end()
+    {
+        return items.end();
+    }
+
+    auto begin() const
+    {
+        return items.cbegin();
+    }
+
+    auto end() const
+    {
+        return items.cend();
+    }
+
+    auto cbegin() const
+    {
+        return items.cbegin();
+    }
+
+    auto cend() const
+    {
+        return items.cend();
+    }
 private:
     std::map<KeyVerbatim, Item> items;
 };
@@ -67,10 +94,37 @@ public:
     void push( const KeyNumeric &key, const Item &item );
     void push( const KeyNumeric &key, Item &&item );
 
-    unsigned size() const;
+    size_t size() const;
 
-    std::vector<Item>::const_iterator begin() const;
-    std::vector<Item>::const_iterator end() const;
+    auto begin()
+    {
+        return items.begin();
+    }
+
+    auto end()
+    {
+        return items.end();
+    }
+
+    auto begin() const
+    {
+        return items.cbegin();
+    }
+
+    auto end() const
+    {
+        return items.cend();
+    }
+
+    auto cbegin() const
+    {
+        return items.cbegin();
+    }
+
+    auto cend() const
+    {
+        return items.cend();
+    }
 private:
     std::vector<Item> items;
 };
