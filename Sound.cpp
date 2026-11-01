@@ -118,11 +118,8 @@ void Sound::ProcessBuffer( unsigned cur )
     wh[cur].lpData = ( char* )data->sound + shift;
 }
 
-Sound::Sound()
-{
-    hWaveOut = nullptr;
-    data = nullptr;
-}
+struct Sound::Implementation
+{};
 
 Sound::Sound( HWND hwnd, SoundData* _data, unsigned samples_in_buf )
 {
@@ -148,6 +145,11 @@ Sound::~Sound()
     ClearBuffer( 0 );
     ClearBuffer( 1 );
     waveOutClose( hWaveOut );
+}
+
+bool Sound::IsPlaying() const
+{
+    return prepared[0] || prepared[1];
 }
 
 void Sound::Play()

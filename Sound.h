@@ -22,6 +22,8 @@ public:
 
 class Sound
 {
+public:
+    struct Implementation;
 private:
     HWAVEOUT hWaveOut;
 
@@ -37,16 +39,14 @@ private:
     bool GetBuffer( unsigned cur );
     void ClearBuffer( unsigned cur );
     void ProcessBuffer( unsigned cur );
+
+    std::shared_ptr<Implementation> core;
 public:
-    Sound();
-    ~Sound();
     Sound( HWND hwnd, SoundData* _data, unsigned samples_in_buf = 5000 );
+    ~Sound();
+
+    bool IsPlaying() const;
 
     void Play();
     void Continue();
-
-    inline bool IsPlaying()const
-    {
-        return prepared[0] || prepared[1];
-    };
 };
