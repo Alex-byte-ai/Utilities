@@ -8,27 +8,6 @@
 
 #include "Affine3D.h"
 
-class Sound;
-
-class MovementRecorder
-{
-private:
-    unsigned maxn, total, n;
-    Affine3D *pos;
-    double *time;
-    Vector3D *sp;
-    void Construct( unsigned _maxn, bool _iof );
-public:
-    bool iof;
-    MovementRecorder();
-    MovementRecorder( unsigned _maxn, bool _iof = false );
-    ~MovementRecorder();
-    void addPoint( const Affine3D& p, double t );
-    void removePoint();
-    Vector3D getPos( double t0 ) const;
-    double getTime( MovementRecorder* e, double t0, double u ) const;
-};
-
 class SoundData
 {
 private:
@@ -38,7 +17,7 @@ private:
 public:
     SoundData( const std::filesystem::path& path );
     ~SoundData();
-    friend Sound;
+    friend class Sound;
 };
 
 class Sound
@@ -51,28 +30,21 @@ private:
 
     SoundData *data;
 
-    unsigned processing_type;
-
     unsigned shift;
     unsigned bufid;
     unsigned sbuflen;
-    unsigned tbuflen;
-
-    double stime;
 
     bool GetBuffer( unsigned cur );
     void ClearBuffer( unsigned cur );
     void ProcessBuffer( unsigned cur );
 public:
-    static double ssp, recd2, mind2, maxd2;
-    MovementRecorder *psnd, *ptrg;
-    Vector3D sml;
     Sound();
     ~Sound();
-    Sound( HWND hwnd, SoundData* _data, unsigned _processing_type = 0, unsigned samples_in_buf = 5000 );
-    //void Delete();
-    void Play( double _stime = 0 );
+    Sound( HWND hwnd, SoundData* _data, unsigned samples_in_buf = 5000 );
+
+    void Play();
     void Continue();
+
     inline bool IsPlaying()const
     {
         return prepared[0] || prepared[1];
